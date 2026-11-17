@@ -89,9 +89,20 @@ class Library:
     def _api(self, path):
         return f"{API}/repos/{self.repo}{path}"
 
+    def _canonical_repo(self):
+        """If the repo was renamed (e.g. CalculusXL -> LinuxEmulator), GitHub redirects the old
+        name for reads but uploads to the old name can fail, so switch to the current name."""
+        if getattr(self, "_checked_name", False):
+            return
+        code, info = self._req("GET", f"{API}/repos/{self.repo}")   # GET follows the rename redirect
+        if code == 200 and info and info.get("full_name"):
+            self.repo = info["full_name"]
+        self._checked_name = True
+
     def release(self):
         if self._release:
             return self._release
+        self._canonical_repo()
         code, rel = self._req("GET", self._api(f"/releases/tags/{TAG}"))
         if code == 404:
             code, rel = self._req("POST", self._api("/releases"), {
