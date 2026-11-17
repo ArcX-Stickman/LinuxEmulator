@@ -26,9 +26,19 @@ app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024 * 1024  # 4 GB
 current = {"proc": None, "exe": None}
 
 # Game mode (mouse lock for 3D games) needs two extra libraries; the site still works without them.
+VNC_PORT_RAW = int(os.environ.get("EXE_VNC_PORT", 5901))
+try:
+    from flask_sock import Sock
+    SOCK = Sock(app)
+    import screenproxy
+    screenproxy.register(app, SOCK, VNC_PORT_RAW)   # screen on the same port as the site
+    SAME_PORT_SCREEN = True
+except ImportError as e:
+    print(f"Screen falls back to port {VNC_PORT} ({e}). Fix: pip install flask-sock")
+    SOCK, SAME_PORT_SCREEN = None, False
 try:
     import gamemode
-    gamemode.register(app, DISPLAY)
+    gamemode.register(app, DISPLAY, SOCK)
     GAME_MODE = True
 except ImportError as e:
     print(f"Game mode off ({e}). Fix: pip install flask-sock python-xlib")
@@ -79,7 +89,7 @@ def stop_game():
 
 @app.route("/")
 def index():
-    return render_template("index.html", vnc_port=VNC_PORT, game_mode=GAME_MODE)
+    return render_template("index.html", vnc_port=VNC_PORT, game_mode=GAME_MODE, same_port=SAME_PORT_SCREEN)
 
 
 @app.route("/api/games")

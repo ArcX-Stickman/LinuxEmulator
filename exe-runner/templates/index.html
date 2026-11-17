@@ -105,7 +105,11 @@ function portUrl(port, path) {
   if (m) return `${location.protocol}//${m[1]}-${port}${m[3]}${path}`;
   return `${location.protocol}//${h}:${port}${path}`;
 }
-const SCREEN_URL = portUrl(VNC_PORT, "/vnc.html?autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1500");
+const VNC_OPTS = "autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1500";
+// Screen comes through this same port when possible (no second Codespaces sign-in needed)
+const SCREEN_URL = {{ 'true' if same_port else 'false' }}
+  ? "/screen/vnc.html?" + VNC_OPTS + "&path=screen/ws"
+  : portUrl(VNC_PORT, "/vnc.html?" + VNC_OPTS);
 const $ = id => document.getElementById(id);
 $("newtab").href = SCREEN_URL;
 function reloadScreen(){ $("screen").src = SCREEN_URL; }

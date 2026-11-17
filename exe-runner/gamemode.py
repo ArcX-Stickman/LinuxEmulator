@@ -102,10 +102,10 @@ class Injector:
             self.d.close()
 
 
-def register(app, display_name):
-    from flask_sock import Sock
-
-    sock = Sock(app)
+def register(app, display_name, sock=None):
+    if sock is None:
+        from flask_sock import Sock
+        sock = Sock(app)
 
     @sock.route("/ws/input")
     def input_ws(ws):
