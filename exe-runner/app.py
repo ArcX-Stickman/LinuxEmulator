@@ -4,6 +4,7 @@ The game draws onto a virtual X display (:1). x11vnc + noVNC stream that display
 to your browser on port 6080, which this page embeds.
 """
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -23,6 +24,15 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024 * 1024  # 4 GB
 
 current = {"proc": None, "exe": None}
+
+# Game mode (mouse lock for 3D games) needs two extra libraries; the site still works without them.
+try:
+    import gamemode
+    gamemode.register(app, DISPLAY)
+    GAME_MODE = True
+except ImportError as e:
+    print(f"Game mode off ({e}). Fix: pip install flask-sock python-xlib")
+    GAME_MODE = False
 
 
 def list_exes():
@@ -67,7 +77,7 @@ def stop_game():
 
 @app.route("/")
 def index():
-    return render_template("index.html", vnc_port=VNC_PORT)
+    return render_template("index.html", vnc_port=VNC_PORT, game_mode=GAME_MODE)
 
 
 @app.route("/api/games")
@@ -76,29 +86,23 @@ def games():
     return jsonify(games=list_exes(), running=current["exe"] if running else None)
 
 
-@app.route("/api/upload", methods=["POST"])
-def upload():
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return jsonify(error="No file"), 400
-    name = secure_filename(f.filename)
+def install_file(tmp: Path, name: str):
+    """Put a fully-uploaded file in place: .exe -> its own folder, .zip -> extracted folder."""
     ext = Path(name).suffix.lower()
+    folder = GAMES_DIR / Path(name).stem
     if ext == ".exe":
-        folder = GAMES_DIR / Path(name).stem
         folder.mkdir(exist_ok=True)
-        f.save(folder / name)
+        shutil.move(str(tmp), folder / name)
     elif ext == ".zip":
-        folder = GAMES_DIR / Path(name).stem
         folder.mkdir(exist_ok=True)
-        tmp = folder / name
-        f.save(tmp)
         try:
             with zipfile.ZipFile(tmp) as zf:
                 safe_extract(zf, folder)
         except (zipfile.BadZipFile, ValueError) as e:
             shutil.rmtree(folder, ignore_errors=True)
-            return jsonify(error=f"Bad zip: {e}"), 400
-        tmp.unlink()
+            raise ValueError(f"Bad zip: {e}")
+        finally:
+            tmp.unlink(missing_ok=True)
         # Zip had one top-level folder (MyGame/...)? Flatten so we don't get MyGame/MyGame/
         kids = list(folder.iterdir())
         if len(kids) == 1 and kids[0].is_dir():
@@ -107,8 +111,46 @@ def upload():
                 shutil.move(str(item), folder / item.name)
             inner.rmdir()
     else:
+        tmp.unlink(missing_ok=True)
+        raise ValueError("Upload a .exe or a .zip of the game folder")
+
+
+# Uploads arrive in small chunks: the Codespaces port proxy rejects big requests with 413.
+INCOMING = GAMES_DIR / ".incoming"
+ALLOWED = {".exe", ".zip"}
+
+
+@app.route("/api/upload_chunk", methods=["POST"])
+def upload_chunk():
+    uid = re.sub(r"[^a-zA-Z0-9]", "", request.form.get("id", ""))[:40]
+    name = secure_filename(request.form.get("name", ""))
+    try:
+        index, total = int(request.form["index"]), int(request.form["total"])
+    except (KeyError, ValueError):
+        return jsonify(error="bad chunk info"), 400
+    chunk = request.files.get("chunk")
+    if not uid or not name or chunk is None or not 0 <= index < total:
+        return jsonify(error="bad chunk"), 400
+    if Path(name).suffix.lower() not in ALLOWED:
         return jsonify(error="Upload a .exe or a .zip of the game folder"), 400
-    return jsonify(ok=True, games=list_exes())
+    INCOMING.mkdir(exist_ok=True)
+    part, counter = INCOMING / f"{uid}.part", INCOMING / f"{uid}.next"
+    expected = int(counter.read_text()) if counter.exists() else 0
+    if index < expected:          # a retry of a chunk we already have
+        return jsonify(ok=True)
+    if index > expected:
+        return jsonify(error=f"missing chunk {expected}"), 409
+    with open(part, "ab") as out:
+        shutil.copyfileobj(chunk.stream, out)
+    counter.write_text(str(index + 1))
+    if index == total - 1:
+        counter.unlink()
+        try:
+            install_file(part, name)
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        return jsonify(ok=True, done=True, games=list_exes())
+    return jsonify(ok=True)
 
 
 @app.route("/api/run", methods=["POST"])

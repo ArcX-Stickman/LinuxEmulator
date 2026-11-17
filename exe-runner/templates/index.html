@@ -33,7 +33,16 @@
   .screen { display:flex; flex-direction:column; gap:8px; min-height:0; }
   .bar { display:flex; gap:8px; align-items:center; color:var(--dim); }
   .bar .sp { flex:1; }
-  iframe { flex:1; width:100%; border:1px solid var(--line); border-radius:10px; background:#000; }
+  #stage { position:relative; flex:1; min-height:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#000; }
+  #stage iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  #lock { position:absolute; inset:0; display:none; cursor:none; }
+  #lock .hint { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,.75); color:#fff;
+    padding:14px 20px; border-radius:10px; text-align:center; cursor:pointer; display:none; }
+  #lock.unlocked { cursor:pointer; } #lock.unlocked .hint { display:block; }
+  #stage:fullscreen { border:0; border-radius:0; }
+  button.game { background:#2d6a2d; border-color:#3fb950; }
+  .sens { display:flex; align-items:center; gap:4px; font-size:12px; }
+  .sens input { width:80px; }
   .msg { color:var(--bad); font-size:12px; margin-top:6px; min-height:1em; }
   a { color:var(--accent); }
   @media (max-width:800px){ main{ grid-template-columns:1fr; height:auto; } iframe{ height:60vh; } }
@@ -65,11 +74,16 @@
   <section class="screen">
     <div class="bar">
       <span id="status">Idle</span><span class="sp"></span>
+      {% if game_mode %}<span class="sens" title="Mouse sensitivity in game mode">🖱 <input id="sens" type="range" min="0.2" max="3" step="0.1" value="1"><span id="sensv">1.0</span></span>{% endif %}
+      <button class="game" onclick="enterGame()" title="Locks the mouse for 3D games like Minecraft. Hold Esc to exit.">🎮 Game mode</button>
       <button class="danger" onclick="stopGame()">■ Stop</button>
       <button onclick="reloadScreen()">Reconnect screen</button>
       <a id="newtab" target="_blank">Open screen in new tab ↗</a>
     </div>
-    <iframe id="screen" allow="fullscreen; clipboard-read; clipboard-write"></iframe>
+    <div id="stage">
+      <iframe id="screen" allow="fullscreen; clipboard-read; clipboard-write"></iframe>
+      <div id="lock"><div class="hint">🎮 Click to capture the mouse<br><small>Hold <b>Esc</b> to leave game mode</small></div></div>
+    </div>
   </section>
 </main>
 <script>
@@ -113,27 +127,54 @@ function render(games, running) {
 }
 async function refresh(){ const j = await api("/api/games"); render(j.games, j.running); }
 async function runGame(path){
-  $("msg").textContent = "";
-  try { await api("/api/run", {path}); refresh(); setTimeout(loadLog, 3000); }
-  catch(e){ $("msg").textContent = e.message; }
+  setMsg("");
+  try { await api("/api/run", {path}); setMsg("Starting… games can take 10–30 seconds to appear", true); refresh(); setTimeout(loadLog, 3000); setTimeout(() => setMsg(""), 30000); }
+  catch(e){ setMsg(e.message); }
 }
 async function stopGame(){ await api("/api/stop", {}); refresh(); }
 async function loadLog(){ const j = await api("/api/log"); $("log").textContent = j.log || "(empty)"; }
 
-function upload(file) {
-  $("msg").textContent = "";
-  const fd = new FormData(); fd.append("file", file);
-  const xhr = new XMLHttpRequest();
-  $("prog").style.display = "block";
-  xhr.upload.onprogress = e => { if (e.lengthComputable) $("prog").value = e.loaded / e.total * 100; };
-  xhr.onload = () => {
-    $("prog").style.display = "none";
-    let j = {}; try { j = JSON.parse(xhr.responseText); } catch {}
-    if (xhr.status !== 200) $("msg").textContent = j.error || "Upload failed (" + xhr.status + ")";
-    refresh();
-  };
-  xhr.onerror = () => { $("prog").style.display = "none"; $("msg").textContent = "Upload failed"; };
-  xhr.open("POST", "/api/upload"); xhr.send(fd);
+function setMsg(t, ok){ $("msg").textContent = t; $("msg").style.color = ok ? "var(--good)" : "var(--bad)"; }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Send the file in small pieces. Codespaces' port proxy rejects big single requests (HTTP 413).
+// If even a piece is too big, halve the piece size and start over.
+async function upload(file) {
+  setMsg("");
+  const prog = $("prog"); prog.style.display = "block"; prog.value = 0;
+  let size = 4 * 1024 * 1024;
+  while (size >= 256 * 1024) {
+    const result = await sendChunks(file, size);
+    if (result === "ok") { prog.style.display = "none"; setMsg("Uploaded " + file.name, true); refresh(); return; }
+    if (result === "too-big") { size = size / 2; continue; }
+    prog.style.display = "none"; setMsg(result); refresh(); return;
+  }
+  prog.style.display = "none"; setMsg("Upload failed: the server keeps saying the file is too large (413).");
+}
+async function sendChunks(file, size) {
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  const total = Math.max(1, Math.ceil(file.size / size));
+  for (let i = 0; i < total; i++) {
+    const fd = new FormData();
+    fd.append("id", id); fd.append("name", file.name);
+    fd.append("index", i); fd.append("total", total);
+    fd.append("chunk", file.slice(i * size, (i + 1) * size), "chunk");
+    let err = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const r = await fetch("/api/upload_chunk", { method: "POST", body: fd });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) { err = ""; break; }
+        if (r.status === 413) return "too-big";
+        err = j.error || ("HTTP " + r.status);
+        if (r.status >= 400 && r.status < 500) return "Upload failed: " + err;
+      } catch (e) { err = e.message; }
+      await sleep(1000 * (attempt + 1));
+    }
+    if (err) return "Upload failed: " + err;
+    $("prog").value = (i + 1) / total * 100;
+    setMsg(`Uploading… ${Math.round((i + 1) / total * 100)}%` + (i + 1 === total && /\.zip$/i.test(file.name) ? " (unpacking zip)" : ""), true);
+  }
+  return "ok";
 }
 const drop = $("drop");
 drop.onclick = () => $("file").click();
@@ -141,6 +182,67 @@ $("file").onchange = e => e.target.files[0] && upload(e.target.files[0]);
 drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
 drop.ondragleave = () => drop.classList.remove("over");
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]); };
+
+
+// ---------- Game mode: pointer lock + relative mouse over a WebSocket ----------
+const GAME_MODE = {{ 'true' if game_mode else 'false' }};
+let ws = null, gm = false, acc = {x:0, y:0}, sens = 1;
+const held = new Set(), lockEl = $("lock");
+const BTN = {0:1, 1:2, 2:3, 3:8, 4:9};
+if ($("sens")) {
+  try { sens = parseFloat(localStorage.getItem("sens")) || 1; } catch {}
+  $("sens").value = sens; $("sensv").textContent = sens.toFixed(1);
+  $("sens").oninput = e => { sens = parseFloat(e.target.value); $("sensv").textContent = sens.toFixed(1);
+    try { localStorage.setItem("sens", sens); } catch {} };
+}
+const locked = () => document.pointerLockElement === lockEl;
+function send(m){ if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+function capture(){
+  const p = lockEl.requestPointerLock({ unadjustedMovement: true });
+  if (p && p.catch) p.catch(() => lockEl.requestPointerLock());
+}
+async function enterGame(){
+  if (!GAME_MODE) { setMsg("Game mode is off. In the terminal: pip install flask-sock python-xlib, then restart the site."); return; }
+  if (gm) { capture(); return; }
+  gm = true;
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/input");
+  ws.onclose = () => { if (gm) { setMsg("Game mode connection lost"); exitGame(); } };
+  lockEl.style.display = "block";
+  capture();                                   // must happen inside the click
+  try { await $("stage").requestFullscreen({ navigationUI: "hide" }); } catch {}
+  try { await navigator.keyboard?.lock(); } catch {}   // lets Esc/Tab reach the game (fullscreen only)
+}
+function releaseHeld(){ for (const k of held) send({t:"ku", k}); held.clear(); }
+function exitGame(){
+  if (!gm) return;
+  gm = false; releaseHeld();
+  try { navigator.keyboard?.unlock(); } catch {}
+  if (locked()) document.exitPointerLock();
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  lockEl.style.display = "none";
+  if (ws) { const w = ws; ws = null; w.close(); }
+}
+document.addEventListener("pointerlockchange", () => lockEl.classList.toggle("unlocked", gm && !locked()));
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) exitGame(); });
+lockEl.addEventListener("click", () => { if (gm && !locked()) capture(); });
+document.addEventListener("mousemove", e => { if (gm && locked()) { acc.x += e.movementX * sens; acc.y += e.movementY * sens; } });
+(function pump(){                              // send at most one mouse message per frame
+  const dx = Math.trunc(acc.x), dy = Math.trunc(acc.y);
+  if (dx || dy) { send({t:"m", x:dx, y:dy}); acc.x -= dx; acc.y -= dy; }
+  requestAnimationFrame(pump);
+})();
+lockEl.addEventListener("mousedown", e => { if (locked()) { e.preventDefault(); send({t:"d", b:BTN[e.button] || 1}); } });
+lockEl.addEventListener("mouseup",   e => { if (locked()) { e.preventDefault(); send({t:"u", b:BTN[e.button] || 1}); } });
+lockEl.addEventListener("contextmenu", e => e.preventDefault());
+lockEl.addEventListener("wheel", e => { if (locked()) { e.preventDefault(); send({t:"w", y:Math.sign(e.deltaY)}); } }, { passive:false });
+document.addEventListener("keydown", e => {
+  if (!gm) return;
+  e.preventDefault();
+  if (e.repeat || held.has(e.code)) return;
+  held.add(e.code); send({t:"kd", k:e.code});
+});
+document.addEventListener("keyup", e => { if (!gm) return; e.preventDefault(); held.delete(e.code); send({t:"ku", k:e.code}); });
+window.addEventListener("blur", releaseHeld);
 
 refresh(); loadLog(); setInterval(refresh, 5000);
 </script>

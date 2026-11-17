@@ -42,6 +42,21 @@ Be careful with that one: anyone who has the link can then see and control the s
 
 ---
 
+## 🎮 Game mode (for Minecraft and other 3D games)
+
+Normally the screen sends your mouse's *position*, so in a 3D game you can only turn until your
+cursor hits the edge of the browser. **Game mode** locks and hides the mouse (like browser games do),
+goes fullscreen, and sends *movement* instead, so you can turn forever.
+
+- Click **🎮 Game mode** above the screen.
+- **Hold Esc** to leave. A quick tap of Esc still goes to the game (pause menu).
+- If the mouse gets released (for example after switching tabs), click the screen to grab it again.
+- Use the 🖱 slider to change mouse sensitivity.
+- **In Minecraft:** Options → Controls → Mouse Settings → **Raw Input: OFF** if turning feels stuck.
+
+Game mode needs two extra Python libraries, which the devcontainer installs. On an older Codespace, run
+`pip install flask-sock python-xlib` and restart the site.
+
 ## EXE Runner: what will and won't work
 
 **Tested:** I compiled a small Windows game, uploaded it as a `.zip`, launched it, and watched

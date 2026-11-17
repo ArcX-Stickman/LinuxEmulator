@@ -8,6 +8,7 @@ without hardware virtualization, and most cloud containers don't expose it.
 """
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -91,15 +92,37 @@ def api_status():
     return jsonify(status=status(), apks=apks)
 
 
-@app.route("/api/upload", methods=["POST"])
-def upload():
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return jsonify(error="No file"), 400
-    name = secure_filename(f.filename)
+# Uploads arrive in small chunks: the Codespaces port proxy rejects big requests with 413.
+INCOMING = APKS_DIR / ".incoming"
+
+
+@app.route("/api/upload_chunk", methods=["POST"])
+def upload_chunk():
+    uid = re.sub(r"[^a-zA-Z0-9]", "", request.form.get("id", ""))[:40]
+    name = secure_filename(request.form.get("name", ""))
+    try:
+        index, total = int(request.form["index"]), int(request.form["total"])
+    except (KeyError, ValueError):
+        return jsonify(error="bad chunk info"), 400
+    chunk = request.files.get("chunk")
+    if not uid or not name or chunk is None or not 0 <= index < total:
+        return jsonify(error="bad chunk"), 400
     if not name.lower().endswith(".apk"):
         return jsonify(error="Only .apk files. (.xapk/.apks bundles are split APKs - see README)"), 400
-    f.save(APKS_DIR / name)
+    INCOMING.mkdir(exist_ok=True)
+    part, counter = INCOMING / f"{uid}.part", INCOMING / f"{uid}.next"
+    expected = int(counter.read_text()) if counter.exists() else 0
+    if index < expected:
+        return jsonify(ok=True)
+    if index > expected:
+        return jsonify(error=f"missing chunk {expected}"), 409
+    with open(part, "ab") as out:
+        shutil.copyfileobj(chunk.stream, out)
+    counter.write_text(str(index + 1))
+    if index == total - 1:
+        counter.unlink()
+        shutil.move(str(part), APKS_DIR / name)
+        return jsonify(ok=True, done=True)
     return jsonify(ok=True)
 
 
