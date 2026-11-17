@@ -235,6 +235,37 @@ def library_remove():
     return jsonify(ok=True)
 
 
+# ---------- Apps panel (Chrome, GeForce NOW, Minecraft, Steam) ----------
+from apps import APPS, Apps
+APP_MGR = Apps(DISPLAY)
+
+
+@app.route("/api/apps")
+def apps_list():
+    return jsonify(APP_MGR.listing())
+
+
+@app.route("/api/apps/<action>", methods=["POST"])
+def apps_action(action):
+    app_id = (request.json or {}).get("id", "")
+    if app_id not in APPS:
+        return jsonify(error="unknown app"), 400
+    try:
+        if action == "install":
+            APP_MGR.install(app_id)
+        elif action == "launch":
+            return jsonify(ok=True, msg=APP_MGR.launch(app_id))
+        elif action == "stop":
+            APP_MGR.stop(app_id)
+        elif action == "log":
+            return jsonify(log=APP_MGR.install_log(app_id))
+        else:
+            return jsonify(error="bad action"), 400
+    except RuntimeError as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(ok=True)
+
+
 @app.route("/api/log")
 def log():
     if not LOG_FILE.exists():

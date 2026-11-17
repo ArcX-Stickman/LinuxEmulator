@@ -72,6 +72,11 @@
       <ul id="list"><li><span class="n"><small>Nothing uploaded yet</small></span></li></ul>
     </div>
     <div class="card">
+      <h2>🧩 Apps</h2>
+      <ul id="apps"></ul>
+      <pre id="applog" style="display:none;margin-top:8px"></pre>
+    </div>
+    <div class="card">
       <h2>☁ Library <button style="float:right;padding:1px 8px" onclick="loadLibrary(true)">↻</button></h2>
       <div id="libnote" class="libnote"></div>
       <ul id="lib"></ul>
@@ -294,6 +299,30 @@ function renderJobs(known = []){
 }
 loadLibrary();
 setInterval(() => { loadLibrary(); }, 4000);
+
+// ---------- Apps panel ----------
+async function loadApps(){
+  let j; try { j = await api("/api/apps"); } catch { return; }
+  const ul = $("apps"); ul.innerHTML = "";
+  for (const a of j.apps) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="n" title="${a.note}">${a.icon} ${a.name}<br><small>${a.note}</small>${a.status ? `<span class="job">${a.status}</span>` : ""}</span>`;
+    const btn = (label, cls, title, fn) => { const b = document.createElement("button"); b.textContent = label; b.className = cls; b.title = title; b.onclick = fn; li.append(b); return b; };
+    const act = async (action) => { try { const r = await api("/api/apps/" + action, {id:a.id}); if (r.msg) setMsg(a.name + ": " + r.msg, true); } catch(e){ setMsg(e.message); } loadApps(); };
+    if (!a.installed) {
+      const b = btn(a.installing ? "…" : "Install", "", "Download and install (runs in the background)", () => act("install"));
+      b.disabled = !!j.installing;
+      if (a.installing || (a.status || "").startsWith("⚠")) btn("📄", "", "Show install log", async () => {
+        const r = await api("/api/apps/log", {id:a.id}); $("applog").style.display = "block"; $("applog").textContent = r.log || "(empty)"; });
+    } else if (a.running) {
+      btn("■", "danger", "Stop", () => act("stop"));
+    } else {
+      btn("▶", "primary", "Open on the game screen", () => act("launch"));
+    }
+    ul.append(li);
+  }
+}
+loadApps(); setInterval(loadApps, 4000);
 
 refresh(); loadLog(); setInterval(refresh, 5000);
 </script>

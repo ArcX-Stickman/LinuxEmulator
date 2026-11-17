@@ -42,6 +42,20 @@ Be careful with that one: anyone who has the link can then see and control the s
 
 ---
 
+## 🧩 Apps: Chrome, GeForce NOW, Minecraft, Steam
+
+The **Apps** panel on the site installs and opens these on the game screen with one click:
+press **Install** (1–5 minutes, runs in the background), then **▶**.
+
+| App | What to expect |
+|---|---|
+| **Minecraft** | Works. Use 🎮 Game mode to look around, and older versions run faster. |
+| **Chrome** | A normal browser on the game screen. |
+| **GeForce NOW** | No Linux app exists, so it opens play.geforcenow.com in Chrome. The video is decoded on the CPU and then streamed to you again, so it's laggy. Opening play.geforcenow.com directly on your own computer is much smoother. |
+| **Steam** | Installs fine, but may not start or run games: Steam uses a sandbox Codespaces may block, and Windows games through Proton are slow without a graphics card. |
+
+You can also install them from the terminal: `bash scripts/install-apps.sh chrome|minecraft|steam|all`.
+
 ## ☁ Shared game library
 
 Upload a game once and it's available in every Codespace made from this repo, so nobody has to
