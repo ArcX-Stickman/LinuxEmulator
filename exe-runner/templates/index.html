@@ -29,6 +29,10 @@
   button:hover { border-color:var(--accent); }
   button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.danger:hover { border-color:var(--bad); color:var(--bad); }
+  .share { display:block; margin-top:8px; font-size:12px; cursor:pointer; }
+  .share small { color:var(--dim); }
+  .libnote { color:var(--dim); font-size:12px; margin-bottom:6px; }
+  li .job { display:block; font-size:11px; color:var(--accent); }
   pre { margin:0; max-height:180px; overflow:auto; font-size:11px; color:var(--dim); white-space:pre-wrap; }
   .screen { display:flex; flex-direction:column; gap:8px; min-height:0; }
   .bar { display:flex; gap:8px; align-items:center; color:var(--dim); }
@@ -59,12 +63,18 @@
       <h2>Upload</h2>
       <div id="drop"><b>Drop a .exe or .zip here</b><br>or click to choose<br><small>Zip the whole game folder if it has DLLs / data files</small></div>
       <input id="file" type="file" accept=".exe,.zip" hidden>
+      <label class="share" title="Uploads a copy to this repo's GitHub Releases so it's available in every Codespace"><input type="checkbox" id="share" checked> ☁ Share to library <small>(public repo: anyone can download it. Only share free games or games you made)</small></label>
       <progress id="prog" max="100" value="0"></progress>
       <div class="msg" id="msg"></div>
     </div>
     <div class="card">
       <h2>Games</h2>
       <ul id="list"><li><span class="n"><small>Nothing uploaded yet</small></span></li></ul>
+    </div>
+    <div class="card">
+      <h2>☁ Library <button style="float:right;padding:1px 8px" onclick="loadLibrary(true)">↻</button></h2>
+      <div id="libnote" class="libnote"></div>
+      <ul id="lib"></ul>
     </div>
     <div class="card">
       <h2>Wine log <button style="float:right;padding:1px 8px" onclick="loadLog()">↻</button></h2>
@@ -156,7 +166,7 @@ async function sendChunks(file, size) {
   for (let i = 0; i < total; i++) {
     const fd = new FormData();
     fd.append("id", id); fd.append("name", file.name);
-    fd.append("index", i); fd.append("total", total);
+    fd.append("index", i); fd.append("total", total); fd.append("share", $("share").checked ? "1" : "0");
     fd.append("chunk", file.slice(i * size, (i + 1) * size), "chunk");
     let err = "";
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -243,6 +253,43 @@ document.addEventListener("keydown", e => {
 });
 document.addEventListener("keyup", e => { if (!gm) return; e.preventDefault(); held.delete(e.code); send({t:"ku", k:e.code}); });
 window.addEventListener("blur", releaseHeld);
+
+// ---------- Shared library ----------
+let libJobs = {};
+async function loadLibrary(force){
+  let j; try { j = await api("/api/library" + (force ? "?refresh=1" : "")); } catch(e){ $("libnote").textContent = e.message; return; }
+  libJobs = j.jobs || {};
+  const ul = $("lib"); ul.innerHTML = "";
+  if (!j.enabled) { $("libnote").textContent = "Library off: " + j.problem; renderJobs(); return; }
+  $("libnote").textContent = j.games.length ? "Games shared in " + j.repo : "Nothing shared yet. Upload a game with ☁ ticked.";
+  for (const g of j.games) {
+    const li = document.createElement("li");
+    const job = libJobs[g.name] || "";
+    li.innerHTML = `<span class="n" title="${g.name}">${g.name}<br><small>${g.size_mb} MB ${g.local ? "· on this Codespace" : ""}</small>${job ? `<span class="job">${job}</span>` : ""}</span>`;
+    if (!g.local && !job.startsWith("⬇") && !job.startsWith("📦")) {
+      const get = document.createElement("button"); get.className = "primary"; get.textContent = "⬇";
+      get.title = "Download to this Codespace";
+      get.onclick = async () => { try { await api("/api/library/get", {id:g.id}); loadLibrary(); } catch(e){ setMsg(e.message); } };
+      li.append(get);
+    }
+    const rm = document.createElement("button"); rm.className = "danger"; rm.textContent = "✕";
+    rm.title = "Remove from the shared library (keeps your local copy)";
+    rm.onclick = async () => { if (confirm("Remove " + g.name + " from the shared library for everyone?")) { try { await api("/api/library/remove", {id:g.id}); } catch(e){ setMsg(e.message); } loadLibrary(); } };
+    li.append(rm); ul.append(li);
+  }
+  renderJobs(j.games.map(g => g.name));
+}
+// Show uploads that aren't in the library listing yet (still uploading / failed)
+function renderJobs(known = []){
+  for (const [name, status] of Object.entries(libJobs)) {
+    if (known.includes(name)) continue;
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="n">${name}<span class="job">${status}</span></span>`;
+    $("lib").append(li);
+  }
+}
+loadLibrary();
+setInterval(() => { loadLibrary(); }, 4000);
 
 refresh(); loadLog(); setInterval(refresh, 5000);
 </script>

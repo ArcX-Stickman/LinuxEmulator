@@ -39,8 +39,10 @@ def list_exes():
     """Every .exe under the games folder, skipping obvious installers/uninstallers."""
     out = []
     for p in sorted(GAMES_DIR.rglob("*")):
+        rel = p.relative_to(GAMES_DIR).as_posix()
+        if rel.startswith("."):          # skip .incoming/ .outbox/ scratch folders
+            continue
         if p.suffix.lower() == ".exe" and p.is_file():
-            rel = p.relative_to(GAMES_DIR).as_posix()
             name = p.name.lower()
             hint = "uninstaller" if "unins" in name else ("crash handler" if "crash" in name else "")
             out.append({"path": rel, "size_mb": round(p.stat().st_size / 1e6, 1), "hint": hint})
@@ -115,6 +117,10 @@ def install_file(tmp: Path, name: str):
         raise ValueError("Upload a .exe or a .zip of the game folder")
 
 
+from library import Library
+LIB = Library(GAMES_DIR, install_file)
+
+
 # Uploads arrive in small chunks: the Codespaces port proxy rejects big requests with 413.
 INCOMING = GAMES_DIR / ".incoming"
 ALLOWED = {".exe", ".zip"}
@@ -145,6 +151,8 @@ def upload_chunk():
     counter.write_text(str(index + 1))
     if index == total - 1:
         counter.unlink()
+        if request.form.get("share") == "1":
+            LIB.share(part, name)            # staged copy uploads in the background
         try:
             install_file(part, name)
         except ValueError as e:
@@ -191,6 +199,30 @@ def delete():
         stop_game()
     shutil.rmtree(top, ignore_errors=True)
     return jsonify(ok=True, games=list_exes())
+
+
+# ---------- shared library (GitHub Releases) ----------
+@app.route("/api/library")
+def library_list():
+    return jsonify(LIB.listing(refresh=request.args.get("refresh") == "1"))
+
+
+@app.route("/api/library/get", methods=["POST"])
+def library_get():
+    try:
+        name = LIB.fetch(int((request.json or {}).get("id", 0)))
+    except (ValueError, RuntimeError) as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(ok=True, name=name)
+
+
+@app.route("/api/library/remove", methods=["POST"])
+def library_remove():
+    try:
+        LIB.remove(int((request.json or {}).get("id", 0)))
+    except (ValueError, RuntimeError) as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(ok=True)
 
 
 @app.route("/api/log")

@@ -42,6 +42,29 @@ Be careful with that one: anyone who has the link can then see and control the s
 
 ---
 
+## ☁ Shared game library
+
+Upload a game once and it's available in every Codespace made from this repo, so nobody has to
+upload it again.
+
+- Leave **☁ Share to library** ticked when uploading. The site uploads a copy to this repo's
+  **GitHub Releases** (a release tagged `game-library`) in the background.
+- In any other Codespace, the **☁ Library** panel lists every shared game. Press **⬇** to download
+  one, then ▶ to play.
+- **✕** removes a game from the library for everyone, but keeps the copy on your Codespace.
+
+**Why Releases and not normal commits:** GitHub blocks files over 100 MB in git, and every game
+committed would stay in the repo history forever and slow down every Codespace. Release files can
+be up to 2 GB each, don't count toward repo size, and are only downloaded when someone presses ⬇.
+
+**⚠ This repo is public, so anyone on the internet can download what's in the library.** Only share
+free games or games you made. Sharing paid games is redistribution, and GitHub takes repos (and
+accounts) down for that.
+
+It works with no setup inside Codespaces, which provide `GITHUB_TOKEN` automatically. Other people's
+uploads only reach this library if they use a Codespace of **this** repo (add them as
+collaborators). A fork has its own separate library.
+
 ## 🎮 Game mode (for Minecraft and other 3D games)
 
 Normally the screen sends your mouse's *position*, so in a 3D game you can only turn until your
