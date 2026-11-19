@@ -112,6 +112,11 @@ def register(app, display_name, sock=None):
 
     @sock.route("/ws/input")
     def input_ws(ws):
+        try:
+            import socket as _s
+            ws.sock.setsockopt(_s.IPPROTO_TCP, _s.TCP_NODELAY, 1)   # deliver each key/mouse event at once
+        except Exception:
+            pass
         inj = Injector(display_name)
         try:
             while True:

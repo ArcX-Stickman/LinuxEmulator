@@ -15,12 +15,12 @@ by every viewer.
 import json
 import os
 import queue
+import socket
 import shutil
 import subprocess
 import threading
 import time
 
-AUD = b"\x00\x00\x00\x01\x09"          # x264 "access unit delimiter" = start of each frame
 
 
 def screen_size(display):
@@ -90,31 +90,50 @@ class Encoder:
             "-profile:v", "baseline", "-pix_fmt", "yuv420p", "-threads", "2",
             "-g", str(fps),                       # a keyframe every second: new viewers join fast
             "-b:v", f"{kbps}k", "-maxrate", f"{kbps}k", "-bufsize", f"{kbps // 2}k",
-            "-x264-params", "aud=1:repeat-headers=1:sliced-threads=1",
-            "-f", "h264", "-",
+            "-x264-params", "sliced-threads=1",
+            # FLV labels every frame with its exact size, so we know the instant a frame is complete
+            "-flush_packets", "1", "-flvflags", "no_duration_filesize", "-f", "flv", "-",
         ]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
         threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
 
     def _pump(self, proc):
-        buf = b""
-        out = proc.stdout
-        while True:
-            data = out.read(65536)
-            if not data:
-                break
-            buf += data
-            # Every frame starts with an access-unit delimiter; emit everything before the next one.
-            while True:
-                start = buf.find(AUD)
-                nxt = buf.find(AUD, start + 5) if start >= 0 else -1
-                if nxt < 0:
-                    break
-                self._emit(buf[start:nxt])
-                buf = buf[nxt:]
+        """Read ffmpeg's FLV output tag by tag. Each video tag is exactly one frame, and its size
+        is written up front, so a frame is sent the moment its last byte arrives: no waiting for
+        the next frame, no guessing. Frames are converted to the plain H.264 format the browser's
+        decoder expects, with the stream's settings (SPS/PPS) attached to every keyframe."""
+        f = proc.stdout
 
-    def _emit(self, frame):
-        key = _is_keyframe(frame)
+        def readn(n):
+            b = b""
+            while len(b) < n:
+                chunk = f.read(n - len(b))
+                if not chunk:
+                    raise EOFError
+                b += chunk
+            return b
+
+        headers, nal_len = b"", 4
+        try:
+            readn(9 + 4)                              # FLV file header + first "previous tag size"
+            while True:
+                tag = readn(11)
+                size = int.from_bytes(tag[1:4], "big")
+                data = readn(size)
+                readn(4)                              # trailing "previous tag size"
+                if tag[0] & 0x1F != 9 or size < 5 or data[0] & 0x0F != 7:
+                    continue                          # not an H.264 video tag (e.g. metadata)
+                body = data[5:]
+                if data[1] == 0:                      # stream settings (avcC record)
+                    headers, nal_len = _avcc_to_annexb(body)
+                elif data[1] == 1:                    # a frame
+                    key = (data[0] >> 4) == 1
+                    frame = _nals_to_annexb(body, nal_len)
+                    self._emit(headers + frame if key else frame, key)
+        except EOFError:
+            pass
+
+    def _emit(self, frame, key):
         if key:
             self.last_key = frame
         self.stats["frames"] += 1
@@ -123,15 +142,28 @@ class Encoder:
             v.offer(frame, key)
 
 
-def _is_keyframe(frame):
-    i = 0
-    while True:
-        i = frame.find(b"\x00\x00\x01", i)
-        if i < 0 or i + 3 >= len(frame):
-            return False
-        if frame[i + 3] & 0x1F == 5:      # NAL type 5 = IDR slice (keyframe)
-            return True
-        i += 3
+START = b"\x00\x00\x00\x01"
+
+
+def _avcc_to_annexb(rec):
+    """avcC record -> (SPS+PPS with start codes, NAL length-field size)."""
+    nal_len = (rec[4] & 0x03) + 1
+    out, i = b"", 6
+    for _ in range(rec[5] & 0x1F):                    # SPS list
+        n = int.from_bytes(rec[i:i + 2], "big"); out += START + rec[i + 2:i + 2 + n]; i += 2 + n
+    count = rec[i]; i += 1
+    for _ in range(count):                            # PPS list
+        n = int.from_bytes(rec[i:i + 2], "big"); out += START + rec[i + 2:i + 2 + n]; i += 2 + n
+    return out, nal_len
+
+
+def _nals_to_annexb(body, nal_len):
+    """Length-prefixed NAL units -> start-code prefixed (Annex B)."""
+    out, i = [], 0
+    while i + nal_len <= len(body):
+        n = int.from_bytes(body[i:i + nal_len], "big"); i += nal_len
+        out.append(START + body[i:i + n]); i += n
+    return b"".join(out)
 
 
 class Viewer:
@@ -176,6 +208,7 @@ def register(app, sock, display):
             kbps = max(300, min(8000, int(request.args.get("kbps", 2500))))
         except ValueError:
             fps, kbps = 30, 2500
+        _no_delay(ws)
         viewer = Viewer(ws)
         enc.join(viewer, {"fps": fps, "kbps": kbps})
         w, h = enc.size
@@ -205,5 +238,14 @@ def register(app, sock, display):
 def _safe_run(viewer):
     try:
         viewer.run()
+    except Exception:
+        pass
+
+
+def _no_delay(ws):
+    """Turn off Nagle's algorithm: send small packets right away instead of batching them."""
+    sock = getattr(ws, "sock", None)
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     except Exception:
         pass

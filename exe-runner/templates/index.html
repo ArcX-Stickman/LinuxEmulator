@@ -124,6 +124,8 @@
 </main>
 <script>
 const $ = id => document.getElementById(id);
+// Raw pointer events (Chrome) arrive straight from the mouse instead of once per screen refresh
+const MOVE_EVT = "onpointerrawupdate" in window ? "pointerrawupdate" : "mousemove";
 const VNC_PORT = {{ vnc_port }};
 // On Codespaces each port gets its own hostname: <name>-8080.app.github.dev -> <name>-6080.app.github.dev
 function portUrl(port, path) {
@@ -202,7 +204,7 @@ function reloadScreen(){
     if (!decoder || decoder.state !== "configured") return;
     const u8 = new Uint8Array(ev.data), key = u8[0] === 1;
     // Falling behind (slow computer/Wi-Fi)? Skip ahead to the next keyframe instead of lagging further.
-    if (!key && (!gotKey || decoder.decodeQueueSize > 3)) { if (gotKey) { gotKey = false; } tDropped++; return; }
+    if (!key && (!gotKey || decoder.decodeQueueSize > 2)) { if (gotKey) { gotKey = false; } tDropped++; return; }
     gotKey = true; tBytes += u8.length;
     try { decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: u8.subarray(1) })); }
     catch (e) { gotKey = false; }
@@ -364,9 +366,10 @@ function toScreen(e){
   const ox = r.left + (r.width - vw * s) / 2, oy = r.top + (r.height - vh * s) / 2;
   return [Math.max(0, Math.min(vw - 1, Math.round((e.clientX - ox) / s))), Math.max(0, Math.min(vh - 1, Math.round((e.clientY - oy) / s)))];
 }
-let pendingMove = null;
-canvas.addEventListener("mousemove", e => { if (!gm) pendingMove = toScreen(e); });
-(function movePump(){ if (pendingMove) { send({t:"a", x:pendingMove[0], y:pendingMove[1]}); pendingMove = null; } requestAnimationFrame(movePump); })();
+canvas.addEventListener(MOVE_EVT, e => {
+  if (gm || (ws && ws.bufferedAmount > 4096)) return;
+  const [x, y] = toScreen(e); send({t:"a", x, y});
+});
 canvas.addEventListener("mousedown", e => { if (gm) return; e.preventDefault(); canvas.focus(); const [x, y] = toScreen(e); send({t:"a", x, y}); send({t:"d", b:BTN[e.button] || 1}); });
 canvas.addEventListener("mouseup",   e => { if (gm) return; e.preventDefault(); send({t:"u", b:BTN[e.button] || 1}); });
 canvas.addEventListener("contextmenu", e => e.preventDefault());
@@ -379,12 +382,14 @@ canvas.addEventListener("blur", () => { for (const k of tHeld) send({t:"ku", k})
 document.addEventListener("pointerlockchange", () => lockEl.classList.toggle("unlocked", gm && !locked()));
 document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) exitGame(); });
 lockEl.addEventListener("click", () => { if (gm && !locked()) capture(); });
-document.addEventListener("mousemove", e => { if (gm && locked()) { acc.x += e.movementX * sens; acc.y += e.movementY * sens; } });
-(function pump(){                              // send at most one mouse message per frame
+// Send movement the moment it happens. "pointerrawupdate" (Chrome) fires straight from the mouse,
+// without waiting for the next screen refresh like "mousemove" does.
+document.addEventListener(MOVE_EVT, e => {
+  if (!(gm && locked())) return;
+  acc.x += e.movementX * sens; acc.y += e.movementY * sens;
   const dx = Math.trunc(acc.x), dy = Math.trunc(acc.y);
-  if (dx || dy) { send({t:"m", x:dx, y:dy}); acc.x -= dx; acc.y -= dy; }
-  requestAnimationFrame(pump);
-})();
+  if ((dx || dy) && (!ws || ws.bufferedAmount < 4096)) { send({t:"m", x:dx, y:dy}); acc.x -= dx; acc.y -= dy; }
+});
 lockEl.addEventListener("mousedown", e => { if (locked()) { e.preventDefault(); send({t:"d", b:BTN[e.button] || 1}); } });
 lockEl.addEventListener("mouseup",   e => { if (locked()) { e.preventDefault(); send({t:"u", b:BTN[e.button] || 1}); } });
 lockEl.addEventListener("contextmenu", e => e.preventDefault());

@@ -48,6 +48,8 @@ Click **🚀 Try Turbo (beta)** at the top right. It's the same site, but the sc
 video stream** instead of VNC screenshots. The classic page stays exactly as it was.
 
 - **About 30 FPS vs about 17 on the classic page** (measured with the same 3D animation).
+- **Low input delay:** a keypress shows up on screen in about 21 ms at 30 FPS and 13 ms at 60 FPS,
+  measured on the server itself. Your Wi-Fi's ping (📶) adds to that.
 - **Light on your computer:** your browser hands the video to your computer's video chip (the
   same one that plays YouTube). The stats bar says **💻 hardware** when that's happening.
 - **The Codespace still does the heavy work** (running the game and encoding the video), and the
