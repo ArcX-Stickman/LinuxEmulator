@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # EXE Runner: UI on port 8080, game screen on port 6080
 cd "$(dirname "$0")"
-bash scripts/start-display.sh 1 5901 6080 1280x720
+# Smaller screen = less to draw and stream = smoother. e.g.  SCREEN=960x540 bash start-exe.sh
+bash scripts/start-display.sh 1 5901 6080 ${SCREEN:-1280x720}
 export WINEPREFIX=${WINEPREFIX:-$HOME/.wine}
 if [ ! -d "$WINEPREFIX" ]; then
   echo "First run: setting up Wine (takes ~1 minute)..."

@@ -45,6 +45,9 @@
   #lock.unlocked { cursor:pointer; } #lock.unlocked .hint { display:block; }
   #stage:fullscreen { border:0; border-radius:0; }
   button.game { background:#2d6a2d; border-color:#3fb950; }
+  .ping { font-size:12px; font-variant-numeric:tabular-nums; min-width:62px; }
+  .ping.ok { color:var(--good); } .ping.meh { color:#f0b429; } .ping.bad { color:var(--bad); }
+  select { background:#21262d; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 6px; font:inherit; }
   .sens { display:flex; align-items:center; gap:4px; font-size:12px; }
   .sens input { width:80px; }
   .msg { color:var(--bad); font-size:12px; margin-top:6px; min-height:1em; }
@@ -89,6 +92,10 @@
   <section class="screen">
     <div class="bar">
       <span id="status">Idle</span><span class="sp"></span>
+      <span id="ping" class="ping" title="Round trip to the Codespace. Under ~60 ms means distance isn't your lag.">📶 –</span>
+      <select id="quality" title="Stream quality. Lower = smoother but blurrier.">
+        <option value="fast">⚡ Fast</option><option value="balanced">⚖ Balanced</option><option value="sharp">🔍 Sharp</option>
+      </select>
       {% if game_mode %}<span class="sens" title="Mouse sensitivity in game mode">🖱 <input id="sens" type="range" min="0.2" max="3" step="0.1" value="1"><span id="sensv">1.0</span></span>{% endif %}
       <button class="game" onclick="enterGame()" title="Locks the mouse for 3D games like Minecraft. Hold Esc to exit.">🎮 Game mode</button>
       <button class="danger" onclick="stopGame()">■ Stop</button>
@@ -102,6 +109,7 @@
   </section>
 </main>
 <script>
+const $ = id => document.getElementById(id);
 const VNC_PORT = {{ vnc_port }};
 // On Codespaces each port gets its own hostname: <name>-8080.app.github.dev -> <name>-6080.app.github.dev
 function portUrl(port, path) {
@@ -110,14 +118,30 @@ function portUrl(port, path) {
   if (m) return `${location.protocol}//${m[1]}-${port}${m[3]}${path}`;
   return `${location.protocol}//${h}:${port}${path}`;
 }
-const VNC_OPTS = "autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1500";
+// quality = JPEG quality (0-9), compression = zlib level (0-9). Lower compression = less CPU on the
+// Codespace, which is the real bottleneck; lower quality = smaller frames over your Wi-Fi.
+const PRESETS = { fast: "quality=2&compression=1", balanced: "quality=5&compression=2", sharp: "quality=8&compression=3" };
+let preset = "balanced"; try { preset = localStorage.getItem("preset") || "balanced"; } catch {}
+if (!PRESETS[preset]) preset = "balanced";
+$("quality").value = preset;
+const VNC_OPTS = "autoconnect=1&resize=scale&reconnect=1&reconnect_delay=1500&" + PRESETS[preset];
 // Screen comes through this same port when possible (no second Codespaces sign-in needed)
 const SCREEN_URL = {{ 'true' if same_port else 'false' }}
   ? "/screen/vnc.html?" + VNC_OPTS + "&path=screen/ws"
   : portUrl(VNC_PORT, "/vnc.html?" + VNC_OPTS);
-const $ = id => document.getElementById(id);
 $("newtab").href = SCREEN_URL;
 function reloadScreen(){ $("screen").src = SCREEN_URL; }
+$("quality").onchange = e => { try { localStorage.setItem("preset", e.target.value); } catch {} location.reload(); };
+// Ping meter: median of the last 5 round trips
+const pings = [];
+setInterval(async () => {
+  const t = performance.now();
+  try { await fetch("/api/ping", {cache:"no-store"}); } catch { return; }
+  pings.push(performance.now() - t); if (pings.length > 5) pings.shift();
+  const ms = Math.round([...pings].sort((a,b) => a-b)[pings.length >> 1]);
+  const el = $("ping"); el.textContent = "📶 " + ms + " ms";
+  el.className = "ping " + (ms < 60 ? "ok" : ms < 120 ? "meh" : "bad");
+}, 2000);
 reloadScreen();
 
 async function api(path, body) {

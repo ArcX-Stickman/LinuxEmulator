@@ -42,6 +42,16 @@ Be careful with that one: anyone who has the link can then see and control the s
 
 ---
 
+## ⚡ Reducing lag
+
+- **📶 ping meter** (top of the screen): the round trip to your Codespace. Under 60 ms means distance
+  isn't the problem; the lag is graphics or streaming. GitHub already picks the nearest region
+  automatically (GitHub → Settings → Codespaces → Region).
+- **Quality menu:** ⚡ Fast sends blurrier frames that arrive sooner. Use it on slow Wi-Fi.
+- **Smaller screen** = less to draw and stream: `SCREEN=960x540 bash start-exe.sh` (default 1280x720).
+- **4-core machine:** github.com/codespaces → ⋯ → Change machine type. The CPU draws all the graphics.
+- **Lower in-game settings** (render distance, shadows) help more than anything else for 3D games.
+
 ## 🧩 Apps: Chrome, GeForce NOW, Minecraft, Steam
 
 The **Apps** panel on the site installs and opens these on the game screen with one click:

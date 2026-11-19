@@ -266,6 +266,11 @@ def apps_action(action):
     return jsonify(ok=True)
 
 
+@app.route("/api/ping")
+def ping():
+    return jsonify(ok=True)
+
+
 @app.route("/api/log")
 def log():
     if not LOG_FILE.exists():
