@@ -46,6 +46,7 @@ class Encoder:
         self.proc = None
         self.settings = None
         self.size = None
+        self.screen = None
         self.stats = {"frames": 0, "bytes": 0}
         self.last_key = None              # newest keyframe, so a new viewer can start instantly
 
@@ -81,11 +82,17 @@ class Encoder:
         for v in self.viewers:
             v.need_key = True             # new stream: everyone waits for its first keyframe
         fps, kbps = settings["fps"], settings["kbps"]
-        w, h = self.size = screen_size(self.display)
+        w, h = self.screen = screen_size(self.display)
+        ow, oh = settings.get("w") or w, settings.get("h") or h
+        if ow >= w or oh >= h:
+            ow, oh = w, h                         # never stream bigger than the real screen
+        self.size = (ow, oh)
+        scale = ["-vf", f"scale={ow}:{oh}:flags=fast_bilinear"] if (ow, oh) != (w, h) else []
         cmd = [
             shutil.which("ffmpeg") or "ffmpeg", "-loglevel", "error", "-nostdin",
             "-f", "x11grab", "-draw_mouse", "1", "-framerate", str(fps),
             "-video_size", f"{w}x{h}", "-i", self.display,
+            *scale,
             "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
             "-profile:v", "baseline", "-pix_fmt", "yuv420p", "-threads", "2",
             "-g", str(fps),                       # a keyframe every second: new viewers join fast
@@ -210,9 +217,16 @@ def register(app, sock, display):
             fps, kbps = 30, 2500
         _no_delay(ws)
         viewer = Viewer(ws)
-        enc.join(viewer, {"fps": fps, "kbps": kbps})
+        try:
+            ow = int(request.args.get("w", 0)); ow -= ow % 2
+            oh = int(request.args.get("h", 0)); oh -= oh % 2
+        except ValueError:
+            ow = oh = 0
+        enc.join(viewer, {"fps": fps, "kbps": kbps, "w": ow, "h": oh})
         w, h = enc.size
-        ws.send(json.dumps({"t": "hello", "w": w, "h": h, "fps": fps, "kbps": kbps}))
+        sw, sh = enc.screen
+        # w,h = video size; sw,sh = real screen size (mouse positions are in screen pixels)
+        ws.send(json.dumps({"t": "hello", "w": w, "h": h, "sw": sw, "sh": sh, "fps": fps, "kbps": kbps}))
         sender = threading.Thread(target=_safe_run, args=(viewer,), daemon=True)
         sender.start()
         try:

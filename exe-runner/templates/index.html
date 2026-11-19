@@ -52,6 +52,16 @@
   .navbtn.off { opacity:.5; cursor:not-allowed; }
   #video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; background:#000; }
   #turboMsg { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#ddd; text-align:center; max-width:80%; }
+  .bar button, .bar select { white-space:nowrap; }
+  .setwrap { position:relative; }
+  .setpanel { position:absolute; right:0; top:34px; z-index:5; width:290px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:12px; box-shadow:0 8px 24px rgba(0,0,0,.4); }
+  .setpanel[hidden] { display:none; }
+  .setpanel label { display:flex; flex-direction:column; gap:5px; font-size:13px; }
+  .setpanel small { color:var(--dim); font-size:11px; }
+  .setpanel input[type=range] { width:100%; }
+  .seg { display:flex; } .seg button { flex:1; border-radius:0; } .seg button:first-child { border-radius:6px 0 0 6px; } .seg button:last-child { border-radius:0 6px 6px 0; }
+  .seg button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .setrow { display:flex; gap:8px; align-items:center; }
   .ping { font-size:12px; font-variant-numeric:tabular-nums; min-width:62px; }
   .ping.ok { color:var(--good); } .ping.meh { color:#f0b429; } .ping.bad { color:var(--bad); }
   select { background:#21262d; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 6px; font:inherit; }
@@ -107,8 +117,18 @@
       {% if turbo %}<span id="tstats" class="ping" title="Frames per second arriving, bandwidth, and whether your video chip (hardware) is decoding">🎞 connecting…</span>{% endif %}
       <span id="ping" class="ping" title="Round trip to the Codespace. Under ~60 ms means distance isn't your lag.">📶 –</span>
       <select id="quality" title="Stream quality. Lower = smoother but blurrier.">
-        <option value="fast">⚡ Fast</option><option value="balanced">⚖ Balanced</option><option value="sharp">🔍 Sharp</option>{% if turbo %}<option value="smooth60" title="Twice the frames. Only helps if the game itself runs above 30 FPS; uses more Codespace CPU and Wi-Fi">🏎 60 FPS</option>{% endif %}
+        <option value="fast">⚡ Fast</option><option value="balanced">⚖ Balanced</option><option value="sharp">🔍 Sharp</option>{% if turbo %}<option value="smooth60" title="Twice the frames. Only helps if the game itself runs above 30 FPS; uses more Codespace CPU and Wi-Fi">🏎 60 FPS</option><option value="custom">⚙ Custom</option>{% endif %}
       </select>
+      {% if turbo %}<span class="setwrap"><button id="setBtn" onclick="toggleSettings()" title="Choose resolution, frame rate and bandwidth yourself">⚙ Stream</button>
+      <div id="setPanel" class="setpanel" hidden>
+        <label>Resolution <small>lower = smoother on slow Wi-Fi</small>
+          <select id="sRes"><option value="0x0">Match screen</option><option value="1920x1080">1080p · 1920×1080</option><option value="1600x900">900p · 1600×900</option><option value="1280x720">720p · 1280×720</option><option value="960x540">540p · 960×540</option><option value="854x480">480p · 854×480</option><option value="640x360">360p · 640×360</option></select></label>
+        <label>Frame rate <small>60 only helps fast games</small>
+          <span class="seg" id="sFps"><button data-v="24">24</button><button data-v="30">30</button><button data-v="60">60</button></span></label>
+        <label>Bandwidth <b id="sKbpsV"></b> <small>more = sharper, needs faster Wi-Fi</small>
+          <input id="sKbps" type="range" min="500" max="8000" step="250"></label>
+        <div class="setrow"><button class="primary" onclick="applySettings()">Apply</button><button onclick="resetSettings()">Reset</button><small id="sHint"></small></div>
+      </div></span>{% endif %}
       {% if game_mode %}<span class="sens" title="Mouse sensitivity in game mode">🖱 <input id="sens" type="range" min="0.2" max="3" step="0.1" value="1"><span id="sensv">1.0</span></span>{% endif %}
       <button class="game" onclick="enterGame()" title="Locks the mouse for 3D games like Minecraft. Hold Esc to exit.">🎮 Game mode</button>
       <button class="danger" onclick="stopGame()">■ Stop</button>
@@ -154,12 +174,47 @@ $("quality").onchange = e => { try { localStorage.setItem("preset", e.target.val
 // ---------- TURBO: H.264 over WebSocket, decoded with WebCodecs ----------
 // fast = fewer, smaller frames for weak Wi-Fi; sharp = more bandwidth for a crisper picture
 const T_PRESETS = { fast: {fps:24, kbps:1200}, balanced: {fps:30, kbps:2500}, sharp: {fps:30, kbps:5000}, smooth60: {fps:60, kbps:4500} };
+let custom = {w:0, h:0, fps:30, kbps:2500};
+try { custom = Object.assign(custom, JSON.parse(localStorage.getItem("tcustom") || "{}")); } catch {}
+T_PRESETS.custom = custom;
 let preset = "balanced"; try { preset = localStorage.getItem("tpreset") || "balanced"; } catch {}
 if (!T_PRESETS[preset]) preset = "balanced";
 $("quality").value = preset;
-$("quality").onchange = e => { try { localStorage.setItem("tpreset", e.target.value); } catch {} preset = e.target.value; reloadScreen(); };
+$("quality").onchange = e => { try { localStorage.setItem("tpreset", e.target.value); } catch {} preset = e.target.value;
+  if (preset === "custom") { toggleSettings(true); } reloadScreen(); };
+// ---------- ⚙ Stream settings panel ----------
+let sFps = 30;
+function fillSettings(c){
+  $("sRes").value = `${c.w}x${c.h}`; if (!$("sRes").value) $("sRes").value = "0x0";
+  sFps = c.fps; document.querySelectorAll("#sFps button").forEach(b => b.classList.toggle("on", +b.dataset.v === sFps));
+  $("sKbps").value = c.kbps; showKbps();
+}
+function showKbps(){
+  const k = +$("sKbps").value; $("sKbpsV").textContent = (k / 1000).toFixed(k < 1000 ? 2 : 1) + " Mbps";
+  const [w] = $("sRes").value.split("x").map(Number);
+  // rough guide: bits needed for a clean picture grow with pixels x frames
+  const need = ((w || 1280) * ((w || 1280) * 9 / 16) * sFps) / 1e6 * 0.1 * 1000;   // ~0.1 bits per pixel looks clean in H.264
+  $("sHint").textContent = k < need * 0.6 ? "⚠ low for this size: may look blocky" : k > need * 2.5 ? "more than needed" : "✓ good match";
+}
+document.querySelectorAll("#sFps button").forEach(b => b.onclick = () => { sFps = +b.dataset.v; fillSettings({...readSettings(), fps:sFps}); });
+$("sKbps").oninput = showKbps; $("sRes").onchange = showKbps;
+function readSettings(){ const [w, h] = $("sRes").value.split("x").map(Number); return {w, h, fps:sFps, kbps:+$("sKbps").value}; }
+function toggleSettings(open){
+  const p = $("setPanel"); p.hidden = open === undefined ? !p.hidden : !open;
+  if (!p.hidden) fillSettings(T_PRESETS[preset]);
+}
+function applySettings(){
+  Object.assign(custom, readSettings());
+  try { localStorage.setItem("tcustom", JSON.stringify(custom)); localStorage.setItem("tpreset", "custom"); } catch {}
+  preset = "custom"; $("quality").value = "custom"; $("setPanel").hidden = true; reloadScreen();
+}
+function resetSettings(){
+  try { localStorage.removeItem("tcustom"); localStorage.setItem("tpreset", "balanced"); } catch {}
+  Object.assign(custom, {w:0, h:0, fps:30, kbps:2500}); preset = "balanced"; $("quality").value = "balanced"; $("setPanel").hidden = true; reloadScreen();
+}
+document.addEventListener("mousedown", e => { const p = $("setPanel"); if (!p.hidden && !e.target.closest(".setwrap")) p.hidden = true; });
 const canvas = $("video"), vctx = canvas.getContext("2d", { alpha:false, desynchronized:true });
-let tws = null, decoder = null, vw = 1280, vh = 720, gotKey = false, hwMode = "…", tFrames = 0, tBytes = 0, tDropped = 0;
+let tws = null, decoder = null, vw = 1280, vh = 720, sw = 1280, sh = 720, gotKey = false, hwMode = "…", tFrames = 0, tBytes = 0, tDropped = 0;
 const wsBase = () => (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 function turboMsg(t){ $("turboMsg").style.display = t ? "block" : "none"; $("turboMsg").innerHTML = t || ""; }
 let vfps = 30;
@@ -193,12 +248,12 @@ function reloadScreen(){
   if (tws) { tws.onclose = null; try { tws.close(); } catch {} }
   if (!("VideoDecoder" in window)) { turboMsg("Your browser doesn't support WebCodecs video decoding (needs Chrome/Edge 94+).<br><a href='/'>Use the classic page</a>"); return; }
   const p = T_PRESETS[preset];
-  tws = new WebSocket(`${wsBase()}/turbo/ws?fps=${p.fps}&kbps=${p.kbps}`);
+  tws = new WebSocket(`${wsBase()}/turbo/ws?fps=${p.fps}&kbps=${p.kbps}` + (p.w ? `&w=${p.w}&h=${p.h}` : ""));
   tws.binaryType = "arraybuffer";
   tws.onmessage = async ev => {
     if (typeof ev.data === "string") {
       const m = JSON.parse(ev.data);
-      if (m.t === "hello") { vw = m.w; vh = m.h; vfps = m.fps; canvas.width = vw; canvas.height = vh; await setupDecoder(); }
+      if (m.t === "hello") { vw = m.w; vh = m.h; sw = m.sw || m.w; sh = m.sh || m.h; vfps = m.fps; canvas.width = vw; canvas.height = vh; await setupDecoder(); }
       return;
     }
     if (!decoder || decoder.state !== "configured") return;
@@ -212,7 +267,7 @@ function reloadScreen(){
   tws.onclose = () => { turboMsg("Reconnecting…"); setTimeout(reloadScreen, 1500); };
 }
 setInterval(() => {
-  $("tstats").textContent = `🎞 ${tFrames} fps · ${(tBytes * 8 / 1e6).toFixed(1)} Mbps · 💻 ${hwMode}`;
+  $("tstats").textContent = `🎞 ${tFrames} fps · ${vh}p · ${(tBytes * 8 / 1e6).toFixed(1)} Mbps · 💻 ${hwMode}`;
   $("tstats").className = "ping " + (tFrames >= vfps * 0.8 ? "ok" : tFrames >= vfps * 0.4 ? "meh" : "bad");
   tFrames = 0; tBytes = 0;
 }, 1000);
@@ -364,7 +419,9 @@ if (GAME_MODE) openInput();
 function toScreen(e){
   const r = canvas.getBoundingClientRect(), s = Math.min(r.width / vw, r.height / vh);
   const ox = r.left + (r.width - vw * s) / 2, oy = r.top + (r.height - vh * s) / 2;
-  return [Math.max(0, Math.min(vw - 1, Math.round((e.clientX - ox) / s))), Math.max(0, Math.min(vh - 1, Math.round((e.clientY - oy) / s)))];
+  // video pixels -> real screen pixels (the video may be scaled down)
+  const x = (e.clientX - ox) / s * sw / vw, y = (e.clientY - oy) / s * sh / vh;
+  return [Math.max(0, Math.min(sw - 1, Math.round(x))), Math.max(0, Math.min(sh - 1, Math.round(y)))];
 }
 canvas.addEventListener(MOVE_EVT, e => {
   if (gm || (ws && ws.bufferedAmount > 4096)) return;

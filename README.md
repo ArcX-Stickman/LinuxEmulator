@@ -54,6 +54,9 @@ video stream** instead of VNC screenshots. The classic page stays exactly as it 
   same one that plays YouTube). The stats bar says **💻 hardware** when that's happening.
 - **The Codespace still does the heavy work** (running the game and encoding the video), and the
   encoder only runs while a Turbo page is open.
+- **⚙ Stream** button: pick your own resolution (16:9 only: 360p to 1080p), frame rate (24/30/60) and
+  bandwidth. The hint tells you if the bandwidth fits the size, and your choice is remembered.
+  The stream never goes bigger than the real screen (`SCREEN=...` when starting the site).
 - **🏎 60 FPS** (optional, in the quality menu): twice the frames and slightly less delay. It only helps
   when the game itself runs above 30 FPS (2D games, Doom, menus), and it needs about 4.5 Mbps of Wi-Fi.
   Balanced (30 FPS) stays the default.
