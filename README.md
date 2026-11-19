@@ -54,6 +54,9 @@ video stream** instead of VNC screenshots. The classic page stays exactly as it 
   same one that plays YouTube). The stats bar says **💻 hardware** when that's happening.
 - **The Codespace still does the heavy work** (running the game and encoding the video), and the
   encoder only runs while a Turbo page is open.
+- **🎮 game FPS meter** in the stats bar: how often the game actually redraws on the Codespace.
+  If 🎮 is lower than 🎞, the *game* is the bottleneck (lower in-game settings or use a bigger
+  Codespace), not the stream.
 - **⚙ Stream** button: pick your own resolution (16:9 only: 360p to 1080p), frame rate (24/30/60) and
   bandwidth. The hint tells you if the bandwidth fits the size, and your choice is remembered.
   The stream never goes bigger than the real screen (`SCREEN=...` when starting the site).
@@ -72,7 +75,10 @@ video stream** instead of VNC screenshots. The classic page stays exactly as it 
   automatically (GitHub → Settings → Codespaces → Region).
 - **Quality menu:** ⚡ Fast sends blurrier frames that arrive sooner. Use it on slow Wi-Fi.
 - **Smaller screen** = less to draw and stream: `SCREEN=960x540 bash start-exe.sh` (default 1280x720).
-- **4-core machine:** github.com/codespaces → ⋯ → Change machine type. The CPU draws all the graphics.
+- **4- or 8-core machine:** github.com/codespaces → ⋯ → Change machine type. The CPU draws all the
+  graphics, and software 3D uses every core, so this is the biggest boost available. (GitHub
+  retired GPU Codespaces in 2025.)
+- The stream helpers (encoder, VNC) run at lower priority than your game, so the game gets the CPU first.
 - **Lower in-game settings** (render distance, shadows) help more than anything else for 3D games.
 
 ## 🧩 Apps: Chrome, GeForce NOW, Minecraft, Steam

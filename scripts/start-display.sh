@@ -14,8 +14,8 @@ if ! pgrep -f "Xvfb :$N " >/dev/null; then
 fi
 pgrep -f "fluxbox.*:$N" >/dev/null || (DISPLAY=:$N fluxbox -display :$N >$LOG/fluxbox.log 2>&1 &)
 pgrep -f "x11vnc.*-rfbport $VNC" >/dev/null || \
-  x11vnc -display :$N -rfbport $VNC -nopw -forever -shared -quiet -xkb -nocursorshape -cursorpos -defer 5 -wait 5 -nowf -nowcr >$LOG/x11vnc.log 2>&1 &
+  nice -n 10 x11vnc -display :$N -rfbport $VNC -nopw -forever -shared -quiet -xkb -nocursorshape -cursorpos -defer 5 -wait 5 -nowf -nowcr >$LOG/x11vnc.log 2>&1 &
 pgrep -f "websockify.*$WEB" >/dev/null || \
-  websockify --web $NOVNC_DIR $WEB localhost:$VNC >$LOG/websockify.log 2>&1 &
+  nice -n 10 websockify --web $NOVNC_DIR $WEB localhost:$VNC >$LOG/websockify.log 2>&1 &
 sleep 1
 echo "Display :$N ready -> noVNC on port $WEB"

@@ -214,7 +214,7 @@ function resetSettings(){
 }
 document.addEventListener("mousedown", e => { const p = $("setPanel"); if (!p.hidden && !e.target.closest(".setwrap")) p.hidden = true; });
 const canvas = $("video"), vctx = canvas.getContext("2d", { alpha:false, desynchronized:true });
-let tws = null, decoder = null, vw = 1280, vh = 720, sw = 1280, sh = 720, gotKey = false, hwMode = "…", tFrames = 0, tBytes = 0, tDropped = 0;
+let gameFps = null, tws = null, decoder = null, vw = 1280, vh = 720, sw = 1280, sh = 720, gotKey = false, hwMode = "…", tFrames = 0, tBytes = 0, tDropped = 0;
 const wsBase = () => (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 function turboMsg(t){ $("turboMsg").style.display = t ? "block" : "none"; $("turboMsg").innerHTML = t || ""; }
 let vfps = 30;
@@ -253,6 +253,7 @@ function reloadScreen(){
   tws.onmessage = async ev => {
     if (typeof ev.data === "string") {
       const m = JSON.parse(ev.data);
+      if (m.t === "stats") { gameFps = m.game_fps; return; }
       if (m.t === "hello") { vw = m.w; vh = m.h; sw = m.sw || m.w; sh = m.sh || m.h; vfps = m.fps; canvas.width = vw; canvas.height = vh; await setupDecoder(); }
       return;
     }
@@ -267,7 +268,10 @@ function reloadScreen(){
   tws.onclose = () => { turboMsg("Reconnecting…"); setTimeout(reloadScreen, 1500); };
 }
 setInterval(() => {
-  $("tstats").textContent = `🎞 ${tFrames} fps · ${vh}p · ${(tBytes * 8 / 1e6).toFixed(1)} Mbps · 💻 ${hwMode}`;
+  // 🎮 = how often the game redraws on the server; 🎞 = frames reaching you. If 🎮 is low, the GAME is the bottleneck.
+  const g = gameFps === null ? "" : `🎮 ${gameFps > vfps ? vfps + "+" : gameFps} · `;
+  $("tstats").textContent = `${g}🎞 ${tFrames} fps · ${vh}p · ${(tBytes * 8 / 1e6).toFixed(1)} Mbps · 💻 ${hwMode}`;
+  $("tstats").title = gameFps !== null && gameFps < tFrames * 0.7 ? "The game itself is drawing slowly: lower in-game settings or use a bigger Codespace" : "🎮 game redraws per second · 🎞 frames reaching you";
   $("tstats").className = "ping " + (tFrames >= vfps * 0.8 ? "ok" : tFrames >= vfps * 0.4 ? "meh" : "bad");
   tFrames = 0; tBytes = 0;
 }, 1000);

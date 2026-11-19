@@ -36,6 +36,16 @@ def screen_size(display):
         return int(w), int(h)
 
 
+# Encoder threads: on a 2-core Codespace a second thread mostly steals time from the game, but
+# one thread can't keep up above 540p (measured: input-delay spikes). So: 1 thread only for small
+# streams on small machines.
+CORES = os.cpu_count() or 2
+
+
+def enc_threads(out_h):
+    return 1 if CORES <= 2 and out_h <= 540 else 2
+
+
 class Encoder:
     """One ffmpeg process, shared. Viewers subscribe; frames are pushed to each viewer's queue."""
 
@@ -64,6 +74,42 @@ class Encoder:
             self.viewers.discard(viewer)
             if not self.viewers:
                 self._stop()              # nobody watching -> stop using CPU
+
+    # ----- game FPS meter -----
+    def _start_meter(self):
+        if getattr(self, "_meter_on", False):
+            return
+        self._meter_on = True
+        threading.Thread(target=self._meter, daemon=True).start()
+
+    def _meter(self):
+        """Count screen redraws per second using the X DAMAGE extension. That's the game's real
+        frame rate (anything that draws counts), which tells you if the GAME or the STREAM is slow."""
+        try:
+            from Xlib import display as xdisplay
+            from Xlib.ext import damage
+            d = xdisplay.Display(self.display)
+            d.damage_query_version()
+            dmg = d.screen().root.damage_create(damage.DamageReportNonEmpty)
+        except Exception:
+            self._meter_on = False
+            return
+        count, t0 = 0, time.time()
+        while self.viewers:
+            while d.pending_events():
+                if d.next_event().type == d.extension_event.DamageNotify:
+                    count += 1
+                    d.damage_subtract(dmg)   # re-arm for the next redraw
+            d.flush()
+            now = time.time()
+            if now - t0 >= 1:
+                msg = json.dumps({"t": "stats", "game_fps": round(count / (now - t0))})
+                for v in list(self.viewers):
+                    v.info(msg)
+                count, t0 = 0, now
+            time.sleep(0.004)
+        d.close()
+        self._meter_on = False
 
     # ----- ffmpeg -----
     def _stop(self):
@@ -94,14 +140,17 @@ class Encoder:
             "-video_size", f"{w}x{h}", "-i", self.display,
             *scale,
             "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-            "-profile:v", "baseline", "-pix_fmt", "yuv420p", "-threads", "2",
+            "-profile:v", "baseline", "-pix_fmt", "yuv420p", "-threads", str(enc_threads(oh)),
             "-g", str(fps),                       # a keyframe every second: new viewers join fast
             "-b:v", f"{kbps}k", "-maxrate", f"{kbps}k", "-bufsize", f"{kbps // 2}k",
-            "-x264-params", "sliced-threads=1",
+            "-x264-params", "sliced-threads=1" if enc_threads(oh) > 1 else "sliced-threads=0",
             # FLV labels every frame with its exact size, so we know the instant a frame is complete
             "-flush_packets", "1", "-flvflags", "no_duration_filesize", "-f", "flv", "-",
         ]
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+        # nice 10: when the CPU is maxed out, the game gets served before the encoder
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
+                                     preexec_fn=lambda: os.nice(10))
+        self._start_meter()
         threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
 
     def _pump(self, proc):
@@ -192,6 +241,12 @@ class Viewer:
             self.need_key = True          # skip ahead to the next keyframe
             with self.q.mutex:
                 self.q.queue.clear()
+
+    def info(self, text):
+        try:
+            self.q.put_nowait(text)
+        except queue.Full:
+            pass
 
     def run(self):
         while getattr(self.ws, "connected", True):
