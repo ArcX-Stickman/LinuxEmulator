@@ -45,6 +45,13 @@
   #lock.unlocked { cursor:pointer; } #lock.unlocked .hint { display:block; }
   #stage:fullscreen { border:0; border-radius:0; }
   button.game { background:#2d6a2d; border-color:#3fb950; }
+  header .sp { flex:1; }
+  .beta { font-size:11px; background:#ff7a1a; color:#fff; padding:2px 6px; border-radius:5px; vertical-align:middle; letter-spacing:.05em; }
+  .navbtn { padding:6px 12px; border-radius:7px; border:1px solid var(--line); color:var(--text); text-decoration:none; background:#21262d; font-size:13px; }
+  .navbtn.turbo { background:linear-gradient(90deg,#ff7a1a,#e8457a); border-color:#ff7a1a; color:#fff; font-weight:600; }
+  .navbtn.off { opacity:.5; cursor:not-allowed; }
+  #video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; background:#000; }
+  #turboMsg { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#ddd; text-align:center; max-width:80%; }
   .ping { font-size:12px; font-variant-numeric:tabular-nums; min-width:62px; }
   .ping.ok { color:var(--good); } .ping.meh { color:#f0b429; } .ping.bad { color:var(--bad); }
   select { background:#21262d; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 6px; font:inherit; }
@@ -57,8 +64,13 @@
 </head>
 <body>
 <header>
-  <h1>🪟 EXE Runner</h1>
+  {% if turbo %}<h1>🚀 EXE Runner <span class="beta">TURBO beta</span></h1>
+  <span class="tag">H.264 video stream: smoother, decoded by your computer's video chip</span>
+  <span class="sp"></span><a class="navbtn" href="/">← Classic page</a>
+  {% else %}<h1>🪟 EXE Runner</h1>
   <span class="tag">Windows games via Wine, streamed to your browser</span>
+  <span class="sp"></span>{% if turbo_ok %}<a class="navbtn turbo" href="/turbo">🚀 Try Turbo (beta)</a>{% else %}<span class="navbtn off" title="Turbo needs ffmpeg: sudo apt-get install -y ffmpeg, then restart the site">🚀 Turbo (needs ffmpeg)</span>{% endif %}
+  {% endif %}
 </header>
 <main>
   <aside>
@@ -92,6 +104,7 @@
   <section class="screen">
     <div class="bar">
       <span id="status">Idle</span><span class="sp"></span>
+      {% if turbo %}<span id="tstats" class="ping" title="Frames per second arriving, bandwidth, and whether your video chip (hardware) is decoding">🎞 connecting…</span>{% endif %}
       <span id="ping" class="ping" title="Round trip to the Codespace. Under ~60 ms means distance isn't your lag.">📶 –</span>
       <select id="quality" title="Stream quality. Lower = smoother but blurrier.">
         <option value="fast">⚡ Fast</option><option value="balanced">⚖ Balanced</option><option value="sharp">🔍 Sharp</option>
@@ -100,10 +113,11 @@
       <button class="game" onclick="enterGame()" title="Locks the mouse for 3D games like Minecraft. Hold Esc to exit.">🎮 Game mode</button>
       <button class="danger" onclick="stopGame()">■ Stop</button>
       <button onclick="reloadScreen()">Reconnect screen</button>
-      <a id="newtab" target="_blank">Open screen in new tab ↗</a>
+      {% if not turbo %}<a id="newtab" target="_blank">Open screen in new tab ↗</a>{% endif %}
     </div>
     <div id="stage">
-      <iframe id="screen" allow="fullscreen; clipboard-read; clipboard-write"></iframe>
+      {% if turbo %}<canvas id="video" tabindex="0" width="1280" height="720"></canvas><div id="turboMsg">Connecting to the video stream…</div>
+      {% else %}<iframe id="screen" allow="fullscreen; clipboard-read; clipboard-write"></iframe>{% endif %}
       <div id="lock"><div class="hint">🎮 Click to capture the mouse<br><small>Hold <b>Esc</b> to leave game mode</small></div></div>
     </div>
   </section>
@@ -118,6 +132,8 @@ function portUrl(port, path) {
   if (m) return `${location.protocol}//${m[1]}-${port}${m[3]}${path}`;
   return `${location.protocol}//${h}:${port}${path}`;
 }
+const TURBO = {{ 'true' if turbo else 'false' }};
+{% if not turbo %}
 // quality = JPEG quality (0-9), compression = zlib level (0-9). Lower compression = less CPU on the
 // Codespace, which is the real bottleneck; lower quality = smaller frames over your Wi-Fi.
 const PRESETS = { fast: "quality=2&compression=1", balanced: "quality=5&compression=2", sharp: "quality=8&compression=3" };
@@ -132,6 +148,66 @@ const SCREEN_URL = {{ 'true' if same_port else 'false' }}
 $("newtab").href = SCREEN_URL;
 function reloadScreen(){ $("screen").src = SCREEN_URL; }
 $("quality").onchange = e => { try { localStorage.setItem("preset", e.target.value); } catch {} location.reload(); };
+{% else %}
+// ---------- TURBO: H.264 over WebSocket, decoded with WebCodecs ----------
+// fast = fewer, smaller frames for weak Wi-Fi; sharp = more bandwidth for a crisper picture
+const T_PRESETS = { fast: {fps:24, kbps:1200}, balanced: {fps:30, kbps:2500}, sharp: {fps:30, kbps:5000} };
+let preset = "balanced"; try { preset = localStorage.getItem("tpreset") || "balanced"; } catch {}
+if (!T_PRESETS[preset]) preset = "balanced";
+$("quality").value = preset;
+$("quality").onchange = e => { try { localStorage.setItem("tpreset", e.target.value); } catch {} preset = e.target.value; reloadScreen(); };
+const canvas = $("video"), vctx = canvas.getContext("2d", { alpha:false, desynchronized:true });
+let tws = null, decoder = null, vw = 1280, vh = 720, gotKey = false, hwMode = "…", tFrames = 0, tBytes = 0, tDropped = 0;
+const wsBase = () => (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+function turboMsg(t){ $("turboMsg").style.display = t ? "block" : "none"; $("turboMsg").innerHTML = t || ""; }
+async function pickDecoder(){
+  const codec = vw * vh > 1280 * 720 ? "avc1.42E028" : "avc1.42E01F";   // baseline profile, level 4.0 / 3.1
+  for (const hw of ["prefer-hardware", "no-preference"]) {
+    const cfg = { codec, codedWidth: vw, codedHeight: vh, optimizeForLatency: true, hardwareAcceleration: hw };
+    try { if ((await VideoDecoder.isConfigSupported(cfg)).supported) return [cfg, hw === "prefer-hardware" ? "hardware" : "software"]; } catch {}
+  }
+  return [null, null];
+}
+async function setupDecoder(){
+  if (decoder) { try { decoder.close(); } catch {} }
+  decoder = null; gotKey = false;
+  const [cfg, mode] = await pickDecoder();
+  if (!cfg) { turboMsg("This browser can't decode H.264 video here.<br><a href='/'>Use the classic page</a>"); return; }
+  hwMode = mode;
+  decoder = new VideoDecoder({
+    output: frame => { vctx.drawImage(frame, 0, 0, vw, vh); frame.close(); tFrames++; turboMsg(""); },
+    error: e => { console.warn("decoder", e); setTimeout(setupDecoder, 200); },
+  });
+  decoder.configure(cfg);
+}
+function reloadScreen(){
+  if (tws) { tws.onclose = null; try { tws.close(); } catch {} }
+  if (!("VideoDecoder" in window)) { turboMsg("Your browser doesn't support WebCodecs video decoding (needs Chrome/Edge 94+).<br><a href='/'>Use the classic page</a>"); return; }
+  const p = T_PRESETS[preset];
+  tws = new WebSocket(`${wsBase()}/turbo/ws?fps=${p.fps}&kbps=${p.kbps}`);
+  tws.binaryType = "arraybuffer";
+  tws.onmessage = async ev => {
+    if (typeof ev.data === "string") {
+      const m = JSON.parse(ev.data);
+      if (m.t === "hello") { vw = m.w; vh = m.h; canvas.width = vw; canvas.height = vh; await setupDecoder(); }
+      return;
+    }
+    if (!decoder || decoder.state !== "configured") return;
+    const u8 = new Uint8Array(ev.data), key = u8[0] === 1;
+    // Falling behind (slow computer/Wi-Fi)? Skip ahead to the next keyframe instead of lagging further.
+    if (!key && (!gotKey || decoder.decodeQueueSize > 3)) { if (gotKey) { gotKey = false; } tDropped++; return; }
+    gotKey = true; tBytes += u8.length;
+    try { decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: u8.subarray(1) })); }
+    catch (e) { gotKey = false; }
+  };
+  tws.onclose = () => { turboMsg("Reconnecting…"); setTimeout(reloadScreen, 1500); };
+}
+setInterval(() => {
+  $("tstats").textContent = `🎞 ${tFrames} fps · ${(tBytes * 8 / 1e6).toFixed(1)} Mbps · 💻 ${hwMode}`;
+  $("tstats").className = "ping " + (tFrames >= 24 ? "ok" : tFrames >= 12 ? "meh" : "bad");
+  tFrames = 0; tBytes = 0;
+}, 1000);
+{% endif %}
 // Ping meter: median of the last 5 round trips
 const pings = [];
 setInterval(async () => {
@@ -248,8 +324,7 @@ async function enterGame(){
   if (!GAME_MODE) { setMsg("Game mode is off. In the terminal: pip install flask-sock python-xlib, then restart the site."); return; }
   if (gm) { capture(); return; }
   gm = true;
-  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/input");
-  ws.onclose = () => { if (gm) { setMsg("Game mode connection lost"); exitGame(); } };
+  openInput();
   lockEl.style.display = "block";
   capture();                                   // must happen inside the click
   try { await $("stage").requestFullscreen({ navigationUI: "hide" }); } catch {}
@@ -263,8 +338,37 @@ function exitGame(){
   if (locked()) document.exitPointerLock();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   lockEl.style.display = "none";
-  if (ws) { const w = ws; ws = null; w.close(); }
+  if (ws && !TURBO) { const w = ws; ws = null; w.onclose = null; w.close(); }   // Turbo keeps it for normal input
 }
+function openInput(){
+  if (ws && ws.readyState <= 1) return;
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/input");
+  ws.onclose = () => {
+    ws = null;
+    if (TURBO) setTimeout(openInput, 1500);
+    else if (gm) { setMsg("Game mode connection lost"); exitGame(); }
+  };
+}
+{% if turbo %}
+// ---------- TURBO normal mode: the video canvas acts like the real screen ----------
+if (GAME_MODE) openInput();
+function toScreen(e){
+  const r = canvas.getBoundingClientRect(), s = Math.min(r.width / vw, r.height / vh);
+  const ox = r.left + (r.width - vw * s) / 2, oy = r.top + (r.height - vh * s) / 2;
+  return [Math.max(0, Math.min(vw - 1, Math.round((e.clientX - ox) / s))), Math.max(0, Math.min(vh - 1, Math.round((e.clientY - oy) / s)))];
+}
+let pendingMove = null;
+canvas.addEventListener("mousemove", e => { if (!gm) pendingMove = toScreen(e); });
+(function movePump(){ if (pendingMove) { send({t:"a", x:pendingMove[0], y:pendingMove[1]}); pendingMove = null; } requestAnimationFrame(movePump); })();
+canvas.addEventListener("mousedown", e => { if (gm) return; e.preventDefault(); canvas.focus(); const [x, y] = toScreen(e); send({t:"a", x, y}); send({t:"d", b:BTN[e.button] || 1}); });
+canvas.addEventListener("mouseup",   e => { if (gm) return; e.preventDefault(); send({t:"u", b:BTN[e.button] || 1}); });
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+canvas.addEventListener("wheel", e => { if (gm) return; e.preventDefault(); send({t:"w", y:Math.sign(e.deltaY)}); }, { passive:false });
+const tHeld = new Set();
+canvas.addEventListener("keydown", e => { if (gm) return; e.preventDefault(); if (e.repeat || tHeld.has(e.code)) return; tHeld.add(e.code); send({t:"kd", k:e.code}); });
+canvas.addEventListener("keyup",   e => { if (gm) return; e.preventDefault(); tHeld.delete(e.code); send({t:"ku", k:e.code}); });
+canvas.addEventListener("blur", () => { for (const k of tHeld) send({t:"ku", k}); tHeld.clear(); });
+{% endif %}
 document.addEventListener("pointerlockchange", () => lockEl.classList.toggle("unlocked", gm && !locked()));
 document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) exitGame(); });
 lockEl.addEventListener("click", () => { if (gm && !locked()) capture(); });

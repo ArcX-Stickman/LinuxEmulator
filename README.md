@@ -42,6 +42,21 @@ Be careful with that one: anyone who has the link can then see and control the s
 
 ---
 
+## 🚀 Turbo page (beta)
+
+Click **🚀 Try Turbo (beta)** at the top right. It's the same site, but the screen is a real **H.264
+video stream** instead of VNC screenshots. The classic page stays exactly as it was.
+
+- **About 30 FPS vs about 17 on the classic page** (measured with the same 3D animation).
+- **Light on your computer:** your browser hands the video to your computer's video chip (the
+  same one that plays YouTube). The stats bar says **💻 hardware** when that's happening.
+- **The Codespace still does the heavy work** (running the game and encoding the video), and the
+  encoder only runs while a Turbo page is open.
+- **If your Wi-Fi can't keep up,** it skips ahead to the newest frame instead of falling further
+  behind. Pick ⚡ Fast for weak connections.
+- **Needs** Chrome or Edge 94+ and `ffmpeg` (`sudo apt-get install -y ffmpeg`, already in the devcontainer).
+- Mouse and keyboard work directly on the video. Click it first, then type. 🎮 Game mode works too.
+
 ## ⚡ Reducing lag
 
 - **📶 ping meter** (top of the screen): the round trip to your Codespace. Under 60 ms means distance

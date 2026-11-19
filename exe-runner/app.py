@@ -36,6 +36,16 @@ try:
 except ImportError as e:
     print(f"Screen falls back to port {VNC_PORT} ({e}). Fix: pip install flask-sock")
     SOCK, SAME_PORT_SCREEN = None, False
+TURBO = False
+if SOCK is not None:
+    try:
+        import turbo
+        turbo.register(app, SOCK, DISPLAY)
+        TURBO = shutil.which("ffmpeg") is not None
+        if not TURBO:
+            print("Turbo page off: ffmpeg missing. Fix: sudo apt-get install -y ffmpeg")
+    except ImportError as e:
+        print(f"Turbo page off ({e})")
 try:
     import gamemode
     gamemode.register(app, DISPLAY, SOCK)
@@ -89,7 +99,15 @@ def stop_game():
 
 @app.route("/")
 def index():
-    return render_template("index.html", vnc_port=VNC_PORT, game_mode=GAME_MODE, same_port=SAME_PORT_SCREEN)
+    return render_template("index.html", vnc_port=VNC_PORT, game_mode=GAME_MODE, same_port=SAME_PORT_SCREEN,
+                           turbo=False, turbo_ok=TURBO)
+
+
+@app.route("/turbo")
+def turbo_page():
+    """Beta page: same site, but the screen is an H.264 video stream instead of VNC."""
+    return render_template("index.html", vnc_port=VNC_PORT, game_mode=GAME_MODE, same_port=SAME_PORT_SCREEN,
+                           turbo=True, turbo_ok=TURBO)
 
 
 @app.route("/api/games")

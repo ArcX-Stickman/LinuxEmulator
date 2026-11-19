@@ -2,7 +2,7 @@ FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 ENV DEBIAN_FRONTEND=noninteractive
 # Wine (32+64 bit) for .exe, a virtual screen + browser streaming, Java for the Android SDK tools
 RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y --no-install-recommends \
-      wine wine64 wine32:i386 \
+      wine wine64 wine32:i386 ffmpeg \
       xvfb x11vnc novnc websockify fluxbox xdotool \
       fonts-dejavu fonts-liberation \
       python3 python3-flask python3-xlib python3-pip \

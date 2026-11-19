@@ -65,6 +65,9 @@ class Injector:
             if dx or dy:
                 # detail=True -> relative motion
                 xtest.fake_input(self.d, X.MotionNotify, detail=True, x=dx, y=dy)
+        elif t == "a":
+            # absolute pointer position (Turbo page, normal mode)
+            xtest.fake_input(self.d, X.MotionNotify, detail=False, x=int(msg.get("x", 0)), y=int(msg.get("y", 0)))
         elif t in ("d", "u"):
             b = int(msg.get("b", 1))
             if b in (1, 2, 3, 8, 9):
