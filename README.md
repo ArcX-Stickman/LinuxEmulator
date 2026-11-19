@@ -52,6 +52,9 @@ video stream** instead of VNC screenshots. The classic page stays exactly as it 
   same one that plays YouTube). The stats bar says **💻 hardware** when that's happening.
 - **The Codespace still does the heavy work** (running the game and encoding the video), and the
   encoder only runs while a Turbo page is open.
+- **🏎 60 FPS** (optional, in the quality menu): twice the frames and slightly less delay. It only helps
+  when the game itself runs above 30 FPS (2D games, Doom, menus), and it needs about 4.5 Mbps of Wi-Fi.
+  Balanced (30 FPS) stays the default.
 - **If your Wi-Fi can't keep up,** it skips ahead to the newest frame instead of falling further
   behind. Pick ⚡ Fast for weak connections.
 - **Needs** Chrome or Edge 94+ and `ffmpeg` (`sudo apt-get install -y ffmpeg`, already in the devcontainer).
