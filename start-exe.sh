@@ -3,6 +3,7 @@
 cd "$(dirname "$0")"
 # Smaller screen = less to draw and stream = smoother. e.g.  SCREEN=960x540 bash start-exe.sh
 bash scripts/start-display.sh 1 5901 6080 ${SCREEN:-1280x720}
+bash scripts/start-audio.sh
 export WINEPREFIX=${WINEPREFIX:-$HOME/.wine}
 if [ ! -d "$WINEPREFIX" ]; then
   echo "First run: setting up Wine (takes ~1 minute)..."

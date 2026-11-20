@@ -57,6 +57,10 @@ video stream** instead of VNC screenshots. The classic page stays exactly as it 
 - **🎮 game FPS meter** in the stats bar: how often the game actually redraws on the Codespace.
   If 🎮 is lower than 🎞, the *game* is the bottleneck (lower in-game settings or use a bigger
   Codespace), not the stream.
+- **🔊 Sound** button: streams the game's audio (Opus, ~0.1 Mbps). Click it once (browsers block sound
+  until you interact), then it switches itself on next time. Measured about 120–180 ms from a sound
+  playing on the Codespace to your speakers, plus your Wi-Fi ping. Needs `pulseaudio` (in the
+  devcontainer; otherwise `sudo apt-get install -y pulseaudio pulseaudio-utils`).
 - **⚙ Stream** button: pick your own resolution (16:9 only: 360p to 1080p), frame rate (24/30/60) and
   bandwidth. The hint tells you if the bandwidth fits the size, and your choice is remembered.
   The stream never goes bigger than the real screen (`SCREEN=...` when starting the site).
@@ -145,7 +149,7 @@ it run in a Chrome tab through noVNC. Upload, launch, stop, delete, and the zip-
   - ⚠️ Simple 3D or Unity games: they might run, slowly
   - ❌ Modern DirectX 11/12 games: unplayable or won't start
 - ❌ **Games with anti-cheat** (Valorant, Fortnite and similar) won't run. Those block Wine on purpose.
-- ❌ **No sound.** Audio isn't streamed.
+- 🔊 **Sound works on the Turbo page** (see below). The Classic page has no sound.
 - ⚠️ **First-person games** that lock the mouse behave badly over VNC.
 - 🔍 Look up your game on the [WineHQ AppDB](https://appdb.winehq.org) to see if it works with Wine.
 - Games made with .NET or XNA may ask to install *Wine Mono* the first time. Click Install in the game screen.

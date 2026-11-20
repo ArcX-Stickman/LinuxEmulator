@@ -53,6 +53,8 @@
   #video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; outline:none; background:#000; }
   #turboMsg { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#ddd; text-align:center; max-width:80%; }
   .bar button, .bar select { white-space:nowrap; }
+  .sound { display:flex; align-items:center; gap:4px; } .sound input { width:70px; }
+  #sndBtn.on { background:var(--accent); border-color:var(--accent); color:#fff; }
   .setwrap { position:relative; }
   .setpanel { position:absolute; right:0; top:34px; z-index:5; width:290px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:12px; box-shadow:0 8px 24px rgba(0,0,0,.4); }
   .setpanel[hidden] { display:none; }
@@ -114,7 +116,8 @@
   <section class="screen">
     <div class="bar">
       <span id="status">Idle</span><span class="sp"></span>
-      {% if turbo %}<span id="tstats" class="ping" title="Frames per second arriving, bandwidth, and whether your video chip (hardware) is decoding">🎞 connecting…</span>{% endif %}
+      {% if turbo %}<span class="sound"><button id="sndBtn" onclick="toggleAudio()" title="Stream the game's sound">🔇 Sound</button><input id="vol" type="range" min="0" max="1" step="0.05" title="Volume"></span>
+      <span id="tstats" class="ping" title="Frames per second arriving, bandwidth, and whether your video chip (hardware) is decoding">🎞 connecting…</span>{% endif %}
       <span id="ping" class="ping" title="Round trip to the Codespace. Under ~60 ms means distance isn't your lag.">📶 –</span>
       <select id="quality" title="Stream quality. Lower = smoother but blurrier.">
         <option value="fast">⚡ Fast</option><option value="balanced">⚖ Balanced</option><option value="sharp">🔍 Sharp</option>{% if turbo %}<option value="smooth60" title="Twice the frames. Only helps if the game itself runs above 30 FPS; uses more Codespace CPU and Wi-Fi">🏎 60 FPS</option><option value="custom">⚙ Custom</option>{% endif %}
@@ -267,6 +270,65 @@ function reloadScreen(){
   };
   tws.onclose = () => { turboMsg("Reconnecting…"); setTimeout(reloadScreen, 1500); };
 }
+
+// ---------- 🔊 Game audio: Opus packets -> AudioDecoder -> Web Audio ----------
+const AUDIO_BUFFER = 0.04;      // 40 ms cushion so Wi-Fi hiccups don't cause crackles
+let audioGaps = 0;
+let actx = null, gainNode = null, adec = null, aws = null, nextT = 0, aTs = 0, audioOn = false;
+let vol = 0.8; try { vol = parseFloat(localStorage.getItem("vol") ?? "0.8"); } catch {}
+$("vol").value = vol;
+$("vol").oninput = e => { vol = +e.target.value; if (gainNode) gainNode.gain.value = vol; try { localStorage.setItem("vol", vol); } catch {} };
+function playAudio(data){
+  const n = data.numberOfFrames, ch = Math.min(2, data.numberOfChannels);
+  const buf = actx.createBuffer(2, n, data.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const arr = new Float32Array(n);
+    data.copyTo(arr, { planeIndex: Math.min(c, ch - 1), format: "f32-planar" });
+    buf.copyToChannel(arr, c);
+  }
+  data.close();
+  const now = actx.currentTime;
+  // fell behind (gap) or drifted too far ahead (delay building up): jump back to a small cushion
+  if (nextT < now + 0.005) { if (nextT) audioGaps++; nextT = now + AUDIO_BUFFER; }   // ran dry (would crackle)
+  else if (nextT > now + AUDIO_BUFFER + 0.06) nextT = now + AUDIO_BUFFER;              // delay creeping up: trim it
+  const src = actx.createBufferSource(); src.buffer = buf; src.connect(gainNode); src.start(nextT);
+  nextT += buf.duration;
+}
+function startAudio(){
+  if (!("AudioDecoder" in window)) { setMsg("This browser can't play the stream's sound (needs Chrome/Edge 94+)."); return false; }
+  actx = actx || new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
+  actx.resume();
+  if (!gainNode) { gainNode = actx.createGain(); gainNode.connect(actx.destination); }
+  gainNode.gain.value = vol;
+  adec = new AudioDecoder({ output: playAudio, error: e => console.warn("audio decoder", e) });
+  adec.configure({ codec: "opus", sampleRate: 48000, numberOfChannels: 2 });
+  aws = new WebSocket(wsBase() + "/turbo/audio"); aws.binaryType = "arraybuffer";
+  aws.onmessage = ev => {
+    if (adec.state !== "configured") return;
+    aTs += 20000;   // every packet is 20 ms
+    adec.decode(new EncodedAudioChunk({ type: "key", timestamp: aTs, data: ev.data }));
+  };
+  aws.onclose = () => { if (audioOn) setTimeout(() => { if (audioOn) { stopAudio(); audioOn = true; startAudio(); } }, 1500); };
+  return true;
+}
+function stopAudio(){
+  audioOn = false;
+  if (aws) { aws.onclose = null; try { aws.close(); } catch {} aws = null; }
+  if (adec) { try { adec.close(); } catch {} adec = null; }
+}
+function toggleAudio(){
+  if (audioOn) stopAudio(); else audioOn = startAudio();
+  $("sndBtn").textContent = audioOn ? "🔊 Sound" : "🔇 Sound";
+  $("sndBtn").classList.toggle("on", audioOn);
+  try { localStorage.setItem("audio", audioOn ? "1" : "0"); } catch {}
+}
+// Browsers only allow sound after you interact with the page: if sound was on last time,
+// switch it back on at your first click or key press.
+try { if (localStorage.getItem("audio") === "1") {
+  const resume = () => { if (!audioOn) toggleAudio(); };
+  document.addEventListener("pointerdown", resume, { once: true, capture: true });
+  document.addEventListener("keydown", resume, { once: true, capture: true });
+} } catch {}
 setInterval(() => {
   // 🎮 = how often the game redraws on the server; 🎞 = frames reaching you. If 🎮 is low, the GAME is the bottleneck.
   const g = gameFps === null ? "" : `🎮 ${gameFps > vfps ? vfps + "+" : gameFps} · `;

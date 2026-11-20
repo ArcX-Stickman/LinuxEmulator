@@ -42,6 +42,8 @@ if SOCK is not None:
         import turbo
         turbo.register(app, SOCK, DISPLAY)
         TURBO = shutil.which("ffmpeg") is not None
+        import audio
+        audio.register(SOCK)
         if not TURBO:
             print("Turbo page off: ffmpeg missing. Fix: sudo apt-get install -y ffmpeg")
     except ImportError as e:
