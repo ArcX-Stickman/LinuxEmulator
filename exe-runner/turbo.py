@@ -64,7 +64,11 @@ class Encoder:
     def join(self, viewer, settings):
         with self.lock:
             self.viewers.add(viewer)
-            if self.proc is None or self.proc.poll() is not None or settings != self.settings:
+            running = self.proc is not None and self.proc.poll() is None
+            others = len(self.viewers) > 1
+            # Restart only if nobody else is watching. Otherwise two tabs with different
+            # settings would keep restarting the stream on each other (reconnect loop).
+            if not running or (settings != self.settings and not others):
                 self._restart(settings)
             elif self.last_key:
                 viewer.offer(self.last_key, True)
@@ -107,7 +111,7 @@ class Encoder:
                 for v in list(self.viewers):
                     v.info(msg)
                 count, t0 = 0, now
-            time.sleep(0.004)
+            time.sleep(0.01)
         d.close()
         self._meter_on = False
 
@@ -228,7 +232,7 @@ class Viewer:
 
     def __init__(self, ws):
         self.ws = ws
-        self.q = queue.Queue(maxsize=8)
+        self.q = queue.Queue(maxsize=16)          # ~0.5 s at 30 FPS before we skip ahead
         self.need_key = True
 
     def offer(self, frame, key):
@@ -281,7 +285,8 @@ def register(app, sock, display):
         w, h = enc.size
         sw, sh = enc.screen
         # w,h = video size; sw,sh = real screen size (mouse positions are in screen pixels)
-        ws.send(json.dumps({"t": "hello", "w": w, "h": h, "sw": sw, "sh": sh, "fps": fps, "kbps": kbps}))
+        cur = enc.settings
+        ws.send(json.dumps({"t": "hello", "w": w, "h": h, "sw": sw, "sh": sh, "fps": cur["fps"], "kbps": cur["kbps"]}))
         sender = threading.Thread(target=_safe_run, args=(viewer,), daemon=True)
         sender.start()
         try:

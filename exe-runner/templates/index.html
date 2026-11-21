@@ -217,6 +217,9 @@ function resetSettings(){
 }
 document.addEventListener("mousedown", e => { const p = $("setPanel"); if (!p.hidden && !e.target.closest(".setwrap")) p.hidden = true; });
 const canvas = $("video"), vctx = canvas.getContext("2d", { alpha:false, desynchronized:true });
+let reconnects = 0, retryMs = 300, lastFrameAt = 0;
+// Small keepalive so port forwarding never sees these connections as idle
+setInterval(() => { for (const w of [tws, aws]) if (w && w.readyState === 1) try { w.send("k"); } catch {} }, 15000);
 let gameFps = null, tws = null, decoder = null, vw = 1280, vh = 720, sw = 1280, sh = 720, gotKey = false, hwMode = "…", tFrames = 0, tBytes = 0, tDropped = 0;
 const wsBase = () => (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 function turboMsg(t){ $("turboMsg").style.display = t ? "block" : "none"; $("turboMsg").innerHTML = t || ""; }
@@ -242,7 +245,7 @@ async function setupDecoder(){
   if (!cfg) { turboMsg("This browser can't decode H.264 video here.<br><a href='/'>Use the classic page</a>"); return; }
   hwMode = mode;
   decoder = new VideoDecoder({
-    output: frame => { vctx.drawImage(frame, 0, 0, vw, vh); frame.close(); tFrames++; turboMsg(""); },
+    output: frame => { vctx.drawImage(frame, 0, 0, vw, vh); frame.close(); tFrames++; lastFrameAt = performance.now(); turboMsg(""); },
     error: e => { console.warn("decoder", e); setTimeout(setupDecoder, 200); },
   });
   decoder.configure(cfg);
@@ -263,12 +266,17 @@ function reloadScreen(){
     if (!decoder || decoder.state !== "configured") return;
     const u8 = new Uint8Array(ev.data), key = u8[0] === 1;
     // Falling behind (slow computer/Wi-Fi)? Skip ahead to the next keyframe instead of lagging further.
-    if (!key && (!gotKey || decoder.decodeQueueSize > 2)) { if (gotKey) { gotKey = false; } tDropped++; return; }
+    if (!key && (!gotKey || decoder.decodeQueueSize > 5)) { if (gotKey) { gotKey = false; } tDropped++; return; }
     gotKey = true; tBytes += u8.length;
     try { decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Math.round(performance.now() * 1000), data: u8.subarray(1) })); }
     catch (e) { gotKey = false; }
   };
-  tws.onclose = () => { turboMsg("Reconnecting…"); setTimeout(reloadScreen, 1500); };
+  tws.onopen = () => { retryMs = 300; };
+  tws.onclose = () => {
+    reconnects++;
+    if (performance.now() - lastFrameAt > 1000) turboMsg("Reconnecting…");   // keep showing the last picture for short blips
+    setTimeout(reloadScreen, retryMs); retryMs = Math.min(retryMs * 2, 5000);
+  };
 }
 
 // ---------- 🔊 Game audio: Opus packets -> AudioDecoder -> Web Audio ----------
@@ -308,7 +316,7 @@ function startAudio(){
     aTs += 20000;   // every packet is 20 ms
     adec.decode(new EncodedAudioChunk({ type: "key", timestamp: aTs, data: ev.data }));
   };
-  aws.onclose = () => { if (audioOn) setTimeout(() => { if (audioOn) { stopAudio(); audioOn = true; startAudio(); } }, 1500); };
+  aws.onclose = () => { if (audioOn) setTimeout(() => { if (audioOn) { stopAudio(); audioOn = true; startAudio(); } }, 500); };
   return true;
 }
 function stopAudio(){
@@ -332,7 +340,7 @@ try { if (localStorage.getItem("audio") === "1") {
 setInterval(() => {
   // 🎮 = how often the game redraws on the server; 🎞 = frames reaching you. If 🎮 is low, the GAME is the bottleneck.
   const g = gameFps === null ? "" : `🎮 ${gameFps > vfps ? vfps + "+" : gameFps} · `;
-  $("tstats").textContent = `${g}🎞 ${tFrames} fps · ${vh}p · ${(tBytes * 8 / 1e6).toFixed(1)} Mbps · 💻 ${hwMode}`;
+  $("tstats").textContent = `${g}🎞 ${tFrames} fps · ${vh}p · ${(tBytes * 8 / 1e6).toFixed(1)} Mbps · 💻 ${hwMode}` + (reconnects ? ` · ⚠ ${reconnects} reconnect${reconnects > 1 ? "s" : ""}` : "");
   $("tstats").title = gameFps !== null && gameFps < tFrames * 0.7 ? "The game itself is drawing slowly: lower in-game settings or use a bigger Codespace" : "🎮 game redraws per second · 🎞 frames reaching you";
   $("tstats").className = "ping " + (tFrames >= vfps * 0.8 ? "ok" : tFrames >= vfps * 0.4 ? "meh" : "bad");
   tFrames = 0; tBytes = 0;

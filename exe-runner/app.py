@@ -29,6 +29,9 @@ current = {"proc": None, "exe": None}
 VNC_PORT_RAW = int(os.environ.get("EXE_VNC_PORT", 5901))
 try:
     from flask_sock import Sock
+    # Ping every WebSocket every 15 s (the library default is never). Without this, Codespaces'
+    # port forwarding can drop a connection that only carries data one way -> random reconnects.
+    app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 15}
     SOCK = Sock(app)
     import screenproxy
     screenproxy.register(app, SOCK, VNC_PORT_RAW)   # screen on the same port as the site

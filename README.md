@@ -61,6 +61,10 @@ video stream** instead of VNC screenshots. The classic page stays exactly as it 
   until you interact), then it switches itself on next time. Measured about 120–180 ms from a sound
   playing on the Codespace to your speakers, plus your Wi-Fi ping. Needs `pulseaudio` (in the
   devcontainer; otherwise `sudo apt-get install -y pulseaudio pulseaudio-utils`).
+- **Laggy with sound?** Start with `SOUND=0 bash start-exe.sh`. With no sound card, games skip their
+  audio work entirely, which frees a bit of CPU on small Codespaces.
+- **⚠ reconnects** appears in the stats bar if the stream had to reconnect. It should stay at 0;
+  if it climbs, your network or the Codespace is dropping connections.
 - **⚙ Stream** button: pick your own resolution (16:9 only: 360p to 1080p), frame rate (24/30/60) and
   bandwidth. The hint tells you if the bandwidth fits the size, and your choice is remembered.
   The stream never goes bigger than the real screen (`SCREEN=...` when starting the site).
